@@ -1,0 +1,80 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# IDE and Editor configs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# PyTorch Checkpoints & Model Weights
+*.pt
+*.pth
+*.bin
+*.onnx
+checkpoints/
+weights/
+pretrained_models/
+
+# Experiment Logging & Artifacts
+runs/
+logs/
+wandb/
+mlruns/
+lightning_logs/
+outputs/
+results/
+*.log
+
+# Medical Imaging Data & NIfTI Files (Keep repository lightweight)
+data/BraTS-Africa/
+data/raw/
+data/processed/
+*.nii
+*.nii.gz
+*.dcm
+*.h5
+*.hdf5
+*.npz
+
+# Large PDF reference papers (>100MB / copyright protected)
+# (Keep documentation and summaries in docs/ and references/README.md)
+references/papers/
+*.pdf
