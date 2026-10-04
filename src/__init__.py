@@ -9,4 +9,3 @@ __authors__ = [
     {"name": "Ukasyah", "email": "ukasyahu@student.telkomuniversity.ac.id"}
 ]
 __author__ = "Akmal Yaasir Fauzaan, Alifia Azzahra, Ukasyah"
-
