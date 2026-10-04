@@ -101,7 +101,8 @@ semi-supervised-brain-tumor-segmentation/
 │   └── references.md                # Synthesized literature review and methodology notes
 ├── notebooks/
 │   ├── 01_brats_dataset_exploration.ipynb # Interactive exploration, NIfTI inspection & 3D visualizations
-│   └── 02_medsam_brain_tumor_segmentation.ipynb # MedSAM zero-shot prompting, PEFT fine-tuning & sub-region evaluation
+│   ├── 02_medsam_brain_tumor_segmentation.ipynb # MedSAM zero-shot prompting, PEFT fine-tuning & sub-region evaluation
+│   └── 03_medsam_2d_vs_3d_dataset_compatibility.ipynb # 2D vs 3D compatibility analysis, VRAM benchmarking & 2.5D propagation
 ├── references/
 │   ├── papers/                      # Research paper PDFs (gitignored for repository hygiene)
 │   └── README.md                    # Literature index of all 23 reference papers
@@ -184,6 +185,17 @@ jupyter notebook notebooks/02_medsam_brain_tumor_segmentation.ipynb
 - 📊 **Sub-Region Evaluation:** Quantitative Dice (DSC), IoU, and error maps for Whole Tumor (WT), Tumor Core (TC), and Enhancing Tumor (ET).
 - ⚡ **Parameter-Efficient Fine-Tuning (PEFT):** Freezing the ViT-B image encoder and training the Mask Decoder with Dice + BCE Loss.
 - 🤝 **Semi-Supervised Synergy:** Connecting MedSAM features to the Mean Teacher consistency framework.
+
+### 3. 2D vs. Native 3D Architecture Compatibility & Benchmark
+Launch to evaluate why pure 2D MedSAM or native 3D foundation models break down on BraTS-Africa, and test the 2.5D hybrid solution:
+```bash
+jupyter notebook notebooks/03_medsam_2d_vs_3d_dataset_compatibility.ipynb
+```
+- ⚖️ **Architectural Dilemma:** Comparing 2D Slice-by-Slice Stacking vs. Native 3D Volumetric ViT (SAM-Med3D).
+- 📊 **Empirical Spatial Profiling:** Quantifying tumor $Z$-span (40–118 slices), slice sparsity (~60% empty slices), and extreme voxel imbalance.
+- 🪜 **Staircase Discontinuity Analysis:** Demonstrating and measuring through-plane ($Z$-axis) step artifacts on coronal/sagittal planes.
+- 💥 **Hardware VRAM Limits:** Benchmarking memory consumption on consumer GPUs (NVIDIA RTX 3050 4 GB) vs. 3D OOM limits.
+- 🚀 **2.5D Adaptive Key-Slice Propagation:** Single-box clinical prompt propagation ($Z \pm 1$) with automatic empty-slice stopping criteria.
 
 ---
 
