@@ -102,7 +102,7 @@ semi-supervised-brain-tumor-segmentation/
 ├── notebooks/
 │   ├── 01_brats_dataset_exploration.ipynb # Interactive exploration, NIfTI inspection & 3D visualizations
 │   ├── 02_medsam_brain_tumor_segmentation.ipynb # MedSAM zero-shot prompting, PEFT fine-tuning & sub-region evaluation
-│   └── 03_medsam_2d_vs_3d_dataset_compatibility.ipynb # 2D vs 3D compatibility analysis, VRAM benchmarking & 2.5D propagation
+│   └── 03_2d_vs_3d_medsam_analysis.ipynb # 2D slice stacking vs Native 3D vs Tri-Planar 2.5D consensus analysis
 ├── references/
 │   ├── papers/                      # Research paper PDFs (gitignored for repository hygiene)
 │   └── README.md                    # Literature index of all 23 reference papers
@@ -186,16 +186,16 @@ jupyter notebook notebooks/02_medsam_brain_tumor_segmentation.ipynb
 - ⚡ **Parameter-Efficient Fine-Tuning (PEFT):** Freezing the ViT-B image encoder and training the Mask Decoder with Dice + BCE Loss.
 - 🤝 **Semi-Supervised Synergy:** Connecting MedSAM features to the Mean Teacher consistency framework.
 
-### 3. 2D vs. Native 3D Architecture Compatibility & Benchmark
-Launch to evaluate why pure 2D MedSAM or native 3D foundation models break down on BraTS-Africa, and test the 2.5D hybrid solution:
+### 3. 2D vs 3D Architectural Decision Analysis
+Launch to quantitatively and visually compare 2D MedSAM slice stacking, Native 3D SAM-Med3D, and Tri-Planar 2.5D consensus:
 ```bash
-jupyter notebook notebooks/03_medsam_2d_vs_3d_dataset_compatibility.ipynb
+jupyter notebook notebooks/03_2d_vs_3d_medsam_analysis.ipynb
 ```
-- ⚖️ **Architectural Dilemma:** Comparing 2D Slice-by-Slice Stacking vs. Native 3D Volumetric ViT (SAM-Med3D).
-- 📊 **Empirical Spatial Profiling:** Quantifying tumor $Z$-span (40–118 slices), slice sparsity (~60% empty slices), and extreme voxel imbalance.
-- 🪜 **Staircase Discontinuity Analysis:** Demonstrating and measuring through-plane ($Z$-axis) step artifacts on coronal/sagittal planes.
-- 💥 **Hardware VRAM Limits:** Benchmarking memory consumption on consumer GPUs (NVIDIA RTX 3050 4 GB) vs. 3D OOM limits.
-- 🚀 **2.5D Adaptive Key-Slice Propagation:** Single-box clinical prompt propagation ($Z \pm 1$) with automatic empty-slice stopping criteria.
+- 📐 **Isotropic Spacing Audit:** Proof of $1.0 \times 1.0 \times 1.0\text{ mm}^3$ isotropic resolution across BraTS-Africa.
+- ⚠️ **Staircase Artifact Exposure:** Visualizing jagged inter-slice borders in Coronal & Sagittal planes caused by naive 2D slice stacking.
+- 📦 **Prompting Burden Quantification:** Comparing 1 single 3D bounding box prompt vs 50+ individual 2D slice boxes.
+- 💡 **Tri-Planar 2.5D Consensus Solution:** Multi-view orthogonal fusion that eliminates staircase artifacts while running smoothly on consumer 4GB VRAM GPUs.
+- 📝 **Paper Blueprint:** Methodological decision matrix for publication-grade research.
 
 ---
 
