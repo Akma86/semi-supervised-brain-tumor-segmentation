@@ -255,6 +255,16 @@ Full list of 23 literature references cataloged in [`references/README.md`](refe
 
 ---
 
+## 👥 Authors & Research Team
+
+| Author | Email |
+| :--- | :--- |
+| **Akmal Yaasir Fauzaan** | [`akmalyaasirfauzaan@student.telkomuniversity.ac.id`](mailto:akmalyaasirfauzaan@student.telkomuniversity.ac.id) |
+| **Alifia Azzahra** | [`fiazfzar@student.telkomuniversity.ac.id`](mailto:fiazfzar@student.telkomuniversity.ac.id) |
+| **Ukasyah** | [`ukasyahu@student.telkomuniversity.ac.id`](mailto:ukasyahu@student.telkomuniversity.ac.id) |
+
+---
+
 ## 📜 License & Citation
 
 This project is licensed under the [MIT License](LICENSE).
@@ -262,8 +272,9 @@ This project is licensed under the [MIT License](LICENSE).
 ```bibtex
 @article{fauzaan2026semibrats,
   title={Semi-Supervised Brain Tumor Segmentation Using Medical Foundation Models Under Limited Annotation},
-  author={Fauzaan, Akmal Yaasir},
+  author={Fauzaan, Akmal Yaasir and Azzahra, Alifia and Ukasyah},
   journal={Research Manuscript / Preprint},
   year={2026}
 }
 ```
+
