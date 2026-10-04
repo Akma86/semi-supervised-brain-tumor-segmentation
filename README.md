@@ -100,7 +100,8 @@ semi-supervised-brain-tumor-segmentation/
 ├── docs/
 │   └── references.md                # Synthesized literature review and methodology notes
 ├── notebooks/
-│   └── 01_brats_dataset_exploration.ipynb # Interactive exploration, NIfTI inspection & 3D visualizations
+│   ├── 01_brats_dataset_exploration.ipynb # Interactive exploration, NIfTI inspection & 3D visualizations
+│   └── 02_medsam_brain_tumor_segmentation.ipynb # MedSAM zero-shot prompting, PEFT fine-tuning & sub-region evaluation
 ├── references/
 │   ├── papers/                      # Research paper PDFs (gitignored for repository hygiene)
 │   └── README.md                    # Literature index of all 23 reference papers
@@ -160,20 +161,29 @@ conda activate med_seg
 
 ---
 
-## 🧪 Interactive Dataset Exploration Notebook
+## 🧪 Interactive Jupyter Notebooks
 
-To understand the NIfTI data format, voxel dimensions, 3D affine coordinates, modality comparisons, and label semantics, launch the provided Jupyter notebook:
-
+### 1. Dataset Exploration Primer
+Launch to explore NIfTI formats, voxel grids, and 3D affine coordinates:
 ```bash
 jupyter notebook notebooks/01_brats_dataset_exploration.ipynb
 ```
-
-**Key Notebook Features:**
 - 🧠 **NIfTI Primer:** Demystifying 3D spatial grids, voxel spacing, and coordinate transforms.
 - 🎨 **Multi-Modal Slice Viewer:** Interactive visualization of `t1n`, `t1c`, `t2w`, and `t2f` side-by-side.
 - 🔍 **Tri-Planar Orthogonal Slices:** Axial ($Z$), Coronal ($Y$), and Sagittal ($X$) cross-sections centered on tumor centroids.
-- 📊 **Voxel Intensity & Distribution Analysis:** Contrast profiles before and after z-score normalization.
-- 🎯 **Foundation Model Prompt Extraction:** Generating 2D bounding boxes and point prompts from weak annotations for MedSAM/SAM.
+- 🎯 **Foundation Model Prompt Extraction:** Generating 2D bounding boxes and point prompts from annotations.
+
+### 2. MedSAM Brain Tumor Segmentation Pipeline
+Launch to run MedSAM zero-shot prompting, prompt robustness analysis, and parameter-efficient fine-tuning:
+```bash
+jupyter notebook notebooks/02_medsam_brain_tumor_segmentation.ipynb
+```
+- 🩺 **Medical Foundation Model:** End-to-end MedSAM (ViT-B) integration for multi-modal brain MRI.
+- 🎨 **Diagnostic 3-Channel Adapter:** Synthesizing high-contrast RGB composites from `t1c`, `t2f`, and `t2w` sequences.
+- 📦 **Clinical Prompt Engineering:** Bounding box prompting with simulated clinical margin jitter ($\pm 0$ to $\pm 30$ px).
+- 📊 **Sub-Region Evaluation:** Quantitative Dice (DSC), IoU, and error maps for Whole Tumor (WT), Tumor Core (TC), and Enhancing Tumor (ET).
+- ⚡ **Parameter-Efficient Fine-Tuning (PEFT):** Freezing the ViT-B image encoder and training the Mask Decoder with Dice + BCE Loss.
+- 🤝 **Semi-Supervised Synergy:** Connecting MedSAM features to the Mean Teacher consistency framework.
 
 ---
 
