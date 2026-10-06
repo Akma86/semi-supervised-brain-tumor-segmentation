@@ -110,3 +110,60 @@ This directory catalogs the literature foundation for the paper:
     - *File:* `MultiMedia Modeling - 30th International Conference, MMM 2024, Proceedings, Part II.pdf`
     - *Venue:* Springer LNCS 14555 (2024)
     - *Key Topic:* Contains key benchmark contributions including *SEAS-Net: Segment Exchange Augmentation for Semi-supervised Brain Tumor Segmentation* and multi-dimensional fusion methods.
+
+---
+
+## 📂 Additional References (`references/papers/Tambahan/` - 19 Papers)
+
+1. **UP2D - Uncertainty-Aware Progressive Pseudo-Label Denoising for Source-Free Domain Adaptive Medical Image Segmentation**
+   - *File:* `UP2D - Uncertainty-Aware Progressive Pseudo-Label Denoising for Source-Free Domain Adaptive Medical Image Segmentation.pdf`
+   - *Venue:* Neurocomputing (2026)
+2. **Uncertainty-Aware Pseudo-Label and Consistency for Semi-Supervised Medical Image Segmentation**
+   - *File:* `Uncertainty-Aware Pseudo-Label and Consistency for Semi-Supervised Medical Image Segmentation.pdf`
+   - *Venue:* Biomedical Signal Processing and Control (BSPC, 2023)
+3. **PseudoSeg - Designing Pseudo Labels for Semantic Segmentation**
+   - *File:* `PseudoSeg - Designing Pseudo Labels for Semantic Segmentation.pdf`
+   - *Venue:* ICLR (2021)
+4. **Reference-Guided Pseudo-Label Generation for Medical Semantic Segmentation**
+   - *File:* `Reference-Guided Pseudo-Label Generation for Medical Semantic Segmentation.pdf`
+   - *Venue:* arXiv:2112.00735 (2021)
+5. **Enhancing Pseudo Label Quality for Semi-Supervised Domain-Generalized Medical Image Segmentation**
+   - *File:* `Enhancing Pseudo Label Quality for Semi-Supervised Domain-Generalized Medical Image Segmentation.pdf`
+   - *Venue:* arXiv:2201.08657 (2022)
+6. **Compete to Win - Enhancing Pseudo Labels for Barely-Supervised Medical Image Segmentation**
+   - *File:* `Compete to Win - Enhancing Pseudo Labels for Barely-Supervised Medical Image Segmentation.pdf`
+   - *Venue:* IEEE Transactions on Medical Imaging (TMI, 2023)
+7. **Dual Cross-Image Semantic Consistency with Self-Aware Pseudo Labeling for Semi-Supervised Medical Image Segmentation**
+   - *File:* `Dual Cross-Image Semantic Consistency with Self-Aware Pseudo Labeling for Semi-Supervised Medical Image Segmentation.pdf`
+   - *Venue:* IEEE Transactions on Medical Imaging (TMI, 2024/2025)
+8. **Enhancing Dual Network Based Semi-Supervised Medical Image Segmentation with Uncertainty-Guided Pseudo-Labeling**
+   - *File:* `Enhancing Dual Network Based Semi-Supervised Medical Image Segmentation with Uncertainty-Guided Pseudo-Labeling.pdf`
+   - *Venue:* arXiv:2509.13084 (2025)
+9. **Clinically Oriented LG-SAM for Lung CT Tumor Segmentation with 2D Training Achieving 3D-Level Performance**
+   - *File:* `Clinically Oriented LG-SAM for Lung CT Tumor Segmentation with 2D Training Achieving 3D-Level Performance.pdf`
+   - *Venue:* Biomedical Signal Processing and Control (BSPC, 2024)
+10. **Enhancing Feature Discrimination with Pseudo-Labels for Foundation Model in Segmentation of 3D Medical Images**
+    - *File:* `Enhancing Feature Discrimination with Pseudo-Labels for Foundation Model in Segmentation of 3D Medical Images.pdf`
+    - *Venue:* Neural Networks (2024)
+11. **Mutual Learning with Reliable Pseudo Label for Semi-Supervised Medical Image Segmentation**
+    - *File:* `Mutual Learning with Reliable Pseudo Label for Semi-Supervised Medical Image Segmentation.pdf`
+    - *Venue:* Medical Image Analysis (MedIA, 2024)
+12. **Semi-Supervised Medical Image Segmentation with Diverse Views via Cross-Pseudo Supervision**
+    - *File:* `Semi-Supervised Medical Image Segmentation with Diverse Views via Cross-Pseudo Supervision.pdf`
+    - *Venue:* Signal, Image and Video Processing (SIVP, 2025)
+13. **SIT-SAM - A Semantic-Integration Transformer that Adapts the Segment Anything Model to Zero-Shot Medical Image Semantic Segmentation**
+    - *File:* `SIT-SAM - A Semantic-Integration Transformer that Adapts the Segment Anything Model to Zero-Shot Medical Image Semantic Segmentation.pdf`
+    - *Venue:* Biomedical Signal Processing and Control (BSPC, 2024)
+14. **Segmentation of Brain Tumors Using a Multi-Modal Segment Anything Model (MSAM) with Missing Modality Adaptation**
+    - *File:* `Segmentation of Brain Tumors Using a Multi-Modal Segment Anything Model (MSAM) with Missing Modality Adaptation.pdf`
+    - *Venue:* Bioengineering (2025)
+15. **Brain Tumor Segmentation via Multi-Modalities Interactive Feature Learning**
+    - *File:* `Brain Tumor Segmentation via Multi-Modalities Interactive Feature Learning.pdf`
+    - *Venue:* Frontiers in Medicine (2021)
+16. **Deep Semi-Supervised Learning for Medical Image Segmentation - A Review**
+    - *File:* `Deep Semi-Supervised Learning for Medical Image Segmentation - A Review.pdf`
+    - *Venue:* Expert Systems With Applications (ESWA, 2024)
+17. **Dual Annotation Learning with Selective Uncertainty for Medical Image Segmentation with Noisy Labels**
+    - *File:* `Dual Annotation Learning with Selective Uncertainty for Medical Image Segmentation with Noisy Labels.pdf`
+    - *Venue:* SSRN (2025)
+
