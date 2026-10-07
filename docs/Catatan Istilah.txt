@@ -1,0 +1,402 @@
+T1 : Memberikan informasi anatomi otak.
+T1ce / T1c : dengan contrast enhancement, biasanya membantu melihat bagian tumor yang mengalami enhancement.
+T2 : Memberikan informasi mengenai jaringan dengan kandungan air tinggi.
+FLAIR : Sangat berguna untuk melihat edema dan lesi karena menekan sinyal cairan tertentu.
+
+Box Prompt : petunjuk kepada MedSAM.
+
+WT, TC, ET = Whole Tumor, Tumor Core, Enhancing Tumor
+
+Nested Structure : 
+WT
+└── TC
+    └── ET
+
+
+Specialist Model : 3D UNET etc
+
+Reliability = seberapa layak kita mempercayai pseudo-label tersebut.
+
+
+Reliability Gating = threshold diterimanya reliability 
+
+Co Refinement : Model Specialist sama MedSAM kerja sama buat benerin 
+
+
+                         BraTS MRI
+                            │
+               ┌────────────┴────────────┐
+               │                         │
+            LABELED                  UNLABELED
+               │                         │
+               │                         ▼
+               │                    Specialist
+               │                         │
+               │                         ▼
+               │                     Prediction
+               │                         │
+               │                  ┌──────┴──────┐
+               │                  │ Reliability │
+               │                  │ per region  │  ★ NOVEL
+               │                  └──────┬──────┘
+               │                         │
+               │              ┌──────────┼──────────┐
+               │              │          │          │
+               │            Good       Medium      Bad
+               │              │          │          │
+               │              ▼          ▼          ▼
+               │             Use       SAM-Med3D  Reject
+               │                         │
+               │                         │
+               │                 ★ NOVEL DECISION
+               │                 Region-adaptive
+               │                 Accept / Refine /
+               │                 Reject
+               │                         │
+               │                         ▼
+               │                Hierarchical Prompt
+               │                         │
+               │                  ★ NOVEL MECHANISM
+               │                         │
+               │                    WT → TC → ET
+               │                         │
+               │                         ▼
+               │                  Refined Mask
+               │                         │
+               └─────────────────────────┤
+                                         ▼
+                                Train Specialist
+                                         │
+                                         ▼
+                                Better Specialist
+
+
+== Brain Tumor MRI Segmentation
+
+Intracranial malignancies, predominantly gliomas, constitute a major clinical
+challenge characterized by substantial morbidity and dismal prognostic outcomes.
+Among these, glioblastoma represents the most aggressive primary brain tumor,
+exhibiting a 5-year relative survival rate of approximately 6.8% and a median
+survival duration of less than one year @jin2025advancements @zhou2026bufnet.
+In neuro-oncological management, establishing the maximal safe extent of
+resection alongside precise radiotherapy planning is critical for extending
+patient survival. Multiparametric Magnetic Resonance Imaging (mpMRI) serves as
+the indispensable non-invasive standard for visualizing intracranial neoplasia
+due to its superior soft-tissue contrast across diverse physical acquisition
+parameters. Routine diagnostic protocols acquire four complementary modalities:
+native T1-weighted (T1), contrast-enhanced T1-weighted with gadolinium
+(T1c/T1Gd), T2-weighted (T2), and Fluid-Attenuated Inversion Recovery (FLAIR).
+Each modality captures distinct physiological and biological properties of the
+tumor microenvironment; T1 and T1c sequences highlight disruptions in the
+blood-brain barrier and delineate the hyperintense tumor core and necrotic
+tissue, whereas T2 and FLAIR sequences selectively accentuate peritumoral
+vasogenic edema by suppressing free water signals
+@jin2025advancements @zhou2026bufnet @wang2021brain.
+
+To standardize benchmarking and foster algorithmic advances in automated
+delineations, the Multimodal Brain Tumor Segmentation (BraTS) challenges were
+established and have evolved over successive annual iterations
+@menze2014multimodal @bakas2018identifying @baid2021rsna. In the standardized
+BraTS annotation schema, intra-tumoral tissues are partitioned into three
+biological sub-compartments: necrotic and non-enhancing tumor core, peritumoral
+edema, and enhancing tumor. For rigorous clinical and computational
+evaluation, these sub-compartments are hierarchically structured into three
+nested target regions: Whole Tumor (WT), which encompasses all abnormal tissue
+compartments; Tumor Core (TC), which isolates the resectable necrotic core and
+active enhancing tumor; and Enhancing Tumor (ET), which represents the active
+angiogenic lesion envelope @menze2014multimodal @wang2021brain @xing2025msam.
+
+Accurate volumetric segmentation across this hierarchy poses severe technical
+challenges. Glioma sub-regions possess non-Euclidean geometries, arbitrary
+spatial configurations, heterogeneous tissue textures, and complex,
+infiltrative boundaries. While the boundary between vasogenic edema and healthy
+parenchyma exhibits gradual transitions, the internal interface separating
+enhancing margins from central necrosis displays subtle intensity contrasts and
+severe partial volume artifacts @zhou2026bufnet @xing2025msam. Furthermore,
+intrinsic class imbalance presents a formidable obstacle, as active enhancing
+tumor and necrotic cores frequently occupy a minute fraction of the total
+intracranial volume relative to expansive edema and background tissue
+@jin2025advancements @wang2021brain. Consequently, manual delineation by expert
+neuroradiologists is not only prohibitively labor-intensive and tedious for
+high-resolution 3D volumetric scans, but it is also inherently subject to
+considerable inter- and intra-observer variability, underscoring the urgent
+necessity for robust, automated segmentation solutions
+@jin2025advancements @xing2025msam.
+
+== Supervised Deep Learning for Brain Tumor Segmentation
+
+Over the past decade, supervised deep learning architectures have fundamentally
+transformed medical image analysis, establishing automated benchmark
+performances on volumetric brain tumor segmentation tasks. The cornerstone of
+this revolution is the U-Net architecture @ronneberger2015unet, which combines
+an encoder-decoder topology with skip connections to simultaneously capture
+high-level semantic context and retain fine-grained spatial representations. In
+the domain of volumetric neuroimaging, this design has been extensively modified
+into 3D convolutional networks, including 3D U-Net and V-Net variants, to exploit
+continuous contextual dependencies across adjacent axial, sagittal, and coronal
+planes @jin2025advancements @han2024deep @zhou2026bufnet. The self-configuring
+nnU-Net framework @isensee2021nnu further demonstrated that standardized
+architectural optimization, adaptive preprocessing, and heuristic hyperparameter
+tuning could surpass heavily customized convolutional pipelines across complex
+biomedical datasets.
+
+Recognizing the receptive field constraints inherent to standard convolutional
+kernels, subsequent investigations have integrated self-attention mechanisms and
+Vision Transformers into volumetric segmentation pipelines
+@wang2021transbts @jiang2022swinbts @hatamizadeh2021swin @zhou2026bufnet.
+Architectures such as TransBTS @wang2021transbts utilize 3D convolutions for
+localized volumetric feature extraction and employ transformer blocks to
+capture global long-range spatial dependencies. SwinBTS @jiang2022swinbts and
+SwinUNETR @hatamizadeh2021swin introduce shifted-window self-attention
+mechanisms within hierarchical U-shaped networks, markedly improving
+computational efficiency while modeling multi-scale contextual relationships
+across heterogeneous intracranial tissue. Concurrently, specialized multi-modal
+architectures such as BUFNet @zhou2026bufnet integrate boundary-aware
+attention modules and multi-modal feature fusion to enhance the discrimination of
+indistinct tumor margins, achieving state-of-the-art results on BraTS
+benchmarks.
+
+Nevertheless, the operational success of fully supervised deep learning models
+remains strictly dependent on the availability of large, curated datasets
+accompanied by exhaustive voxel-level ground truth annotations
+@jin2025advancements @han2024deep @lu2024enhancing. In volumetric neuroimaging,
+delineating complex 3D glioma boundaries across multiple co-registered MRI
+sequences requires specialized neuroanatomical and neuroradiological expertise.
+The manual segmentation of a single multi-parametric scan can consume several
+hours of expert clinician time @jin2026enhancing @han2024dual. This labor
+intensity generates a severe annotation bottleneck, rendering supervised
+paradigms difficult to scale across broad clinical settings or institutional data
+repositories. When supervised networks are trained with scarce labeled samples,
+they exhibit severe susceptibility to empirical distribution shifts,
+overfitting, and drastic performance degradation on peripheral and
+underrepresented sub-regions such as the enhancing tumor core
+@jin2025advancements @guo2026semiswinunetr @ottesen2025semi.
+
+== Semi-Supervised Learning for Medical Image Segmentation
+
+To alleviate the dependence on extensive manual annotations, semi-supervised
+learning (SSL) has emerged as an appealing paradigm by exploiting abundant
+unannotated imaging scans in conjunction with a small set of labeled volumes
+@jin2025advancements @han2024deep @su2024mutual. In semi-supervised medical
+image segmentation, methodological designs are predominantly organized around
+two foundational frameworks: consistency regularization and pseudo-labeling.
+
+Consistency regularization operates on the smoothness and manifold assumptions,
+enforcing invariance in network predictions when identical unlabeled inputs are
+subjected to diverse spatial, intensity, or structural perturbations
+@han2024deep @guo2026semiswinunetr @ottesen2025semi. The Mean Teacher
+framework @tarvainen2017mean establishes an exponential moving average (EMA)
+of student network weights to construct a temporally stable teacher model,
+minimizing prediction discrepancy across perturbed inputs. Subsequent
+developments expand upon this concept by introducing dual networks, interpolation
+consistency training, and cross-pseudo supervision (CPS)
+@chen2021semi @ottesen2025semi @lu2024enhancing, wherein parallel networks
+cross-supervise one another using their respective categorical predictions.
+
+Pseudo-labeling, or self-training, provides an alternative and complementary
+mechanism wherein a model trained on available annotated data generates proxy
+segmentation targets for unlabeled images, which are subsequently integrated
+into the training objective to iteratively guide representation learning
+@han2024deep @lu2023uncertainty @su2024mutual @jin2026enhancing. Despite its
+conceptual elegance, conventional pseudo-labeling exhibits severe
+vulnerabilities when applied to complex medical imaging tasks. During initial
+training phases with scarce annotations, the segmentation model inherently
+generates inaccurate, noisy pseudo-labels due to insufficient feature
+discrimination @lu2024enhancing @su2024mutual @liu2026semi. Incorporating
+unverified, noisy pseudo-labels into standard supervised loss functions induces
+error propagation and triggers confirmation bias, a detrimental phenomenon where
+the network repeatedly reinforces and memorizes its own incorrect predictions
+across successive iterations @compete2024 @liu2026semi @su2024mutual.
+
+To mitigate pseudo-label noise, common heuristics incorporate static probability
+thresholds to filter out predictions that fall below an empirical confidence
+level @compete2024 @liu2026semi @lu2024enhancing. However, applying a uniform
+global threshold is fundamentally flawed in volumetric tumor segmentation. High
+prediction probabilities often correlate with dominant background voxels or
+homogeneous non-tumor brain tissue, whereas clinically critical but difficult
+foreground lesions—specifically infiltrative edema boundaries and minute necrotic
+pockets—systematically exhibit suppressed confidence values
+@su2024mutual @lu2024enhancing @xu2026semi. Consequently, rigid filtering
+strategies disproportionately discard informative foreground guidance while
+permitting high-confidence false positives to persist, leading to biased
+gradient updates and suboptimal convergence @lu2024enhancing @jin2026enhancing.
+
+== Foundation Models and SAM-Med3D
+
+The paradigm of computer vision has witnessed a major transition toward
+foundation models, spearheaded by the Segment Anything Model (SAM)
+@kirillov2023segment. Trained on the expansive SA-1B dataset comprising over
+eleven million natural images and one billion masks, SAM possesses exceptional
+zero-shot generalization and flexible promptable segmentation capabilities using
+point coordinates, bounding boxes, or coarse masks
+@kirillov2023segment @zhang2025semisam. Recognizing the potential of universal
+segmentation models, recent efforts have adapted SAM to the biomedical domain to
+bridge the profound distribution shift between natural scenes and clinical
+acquisitions @ma2024segment @cheng2023sammed2d @wang2024sammed3d @zhang2025semisam.
+Prominent among these adaptations is MedSAM @ma2024segment, which fine-tunes
+SAM’s mask decoder on over one million 2D biomedical image-mask pairs, and
+SAM-Med2D @cheng2023sammed2d, which integrates learnable adapter modules across
+natural ViT encoders to capture domain-specific spatial patterns.
+
+Despite these advances, 2D medical foundation models exhibit notable structural
+deficiencies when applied to volumetric scans such as brain MRI
+@wang2024sammed3d @yi2026clinically @foundationliver2025. Slice-by-slice 2D
+inference inherently ignores through-plane anatomical context and volumetric
+spatial continuity, resulting in jagged, discontinuous segmented volumes and
+false positives along peripheral image slices
+@yi2026clinically @foundationliver2025. To address this spatial limitation,
+SAM-Med3D @wang2024sammed3d redesigns the original architecture into a fully 3D
+framework, incorporating a 3D Swin-ViT image encoder, volumetric prompt encoder,
+and 3D mask decoder pre-trained on diverse volumetric modalities. SAM-Med3D
+demonstrates improved spatial coherence and volumetric representation capability
+with a reduced number of interaction prompts compared to its 2D predecessors
+@wang2024sammed3d @yi2026clinically @zhang2025semisam.
+
+Nevertheless, critical barriers hinder the direct deployment of SAM-Med3D for
+fully automated brain tumor segmentation. First, SAM-Med3D operates
+fundamentally as an interactive, prompt-dependent segmenter; it requires
+explicit spatial prompts (e.g., bounding boxes or centroid points) to localize
+objects of interest and cannot perform autonomous semantic inference in standard
+clinical workflows lacking expert interaction
+@wang2024sammed3d @zhang2025semisam @xing2025msam. Second, foundation models
+lack native multi-class semantic reasoning; they delineate binary foreground
+envelopes conditioned on input prompts rather than categorizing overlapping,
+nested biological sub-structures such as whole tumor versus necrotic core
+@zhang2025semisam @xing2025msam. Third, when applied to brain neoplasms
+characterized by diffuse infiltration, weak tissue contrast, and microvascular
+proliferation, generic foundation representations struggle to distinguish fine
+structural boundaries without precise, manually curated prompt boundaries
+@xing2025msam @researchsam2025. Thus, while foundation models offer rich
+anatomical shape priors, their clinical utility in brain tumor segmentation
+necessitates systematic integration within specialized frameworks capable of
+autonomous prompt generation and semantic reasoning.
+
+== Pseudo-Label Refinement and Reliability-Aware Segmentation
+
+To address the limitations of noisy pseudo-labels without discarding scarce
+training signals, recent semi-supervised studies have shifted focus toward
+reliability-aware and uncertainty-guided pseudo-label refinement
+@lu2023uncertainty @su2024mutual @lu2024enhancing @han2024dual. Rather than
+treating all unlabeled predictions as uniformly valid or binary targets,
+uncertainty quantification seeks to evaluate the dependability of network
+outputs @zhou2026bufnet @lu2023uncertainty. Early uncertainty estimation
+strategies leveraged Monte Carlo dropout @sedai2019 or network ensembles to
+model predictive variance, but these approaches incur substantial computational
+overhead during training. To resolve this inefficiency, UPC @lu2023uncertainty
+computes the Kullback-Leibler (KL) divergence between student and teacher
+outputs within a Mean Teacher architecture, utilizing this divergence as a
+continuous voxel-level uncertainty map to dynamically rectify pseudo-label
+supervision. Similarly, Lu et al. @lu2024enhancing combine cross-pseudo
+supervision with entropy-based filtering and prototype contrastive alignment,
+suppressing uncalibrated, overconfident predictions on unlabeled volumes.
+
+Concurrently, feature-level consistency and reliability metrics have been
+explored to calibrate pseudo-label quality. Su et al. @su2024mutual introduced
+a mutual learning architecture between dual decoders that evaluates prediction
+reliability via intra-class feature similarity, dynamically weighting
+pseudo-labels according to embedding compactness. In the domain of noisy label
+learning, DASU @han2024dual demonstrated that uniform uncertainty estimation
+across an entire medical volume overlooks localized anatomical variations,
+proposing a selective uncertainty module that segregates trustworthy and
+untrustworthy regions to guide selective pixel-wise label correction.
+Furthermore, external geometric and topological priors, such as superpixel
+grouping @thompson2022pseudo and boundary-aware active contours
+@jin2025advancements, have been utilized to reconstruct corrupted pseudo-label
+borders.
+
+A crucial finding synthesized from this literature is that pseudo-label quality
+is highly heterogeneous and varies drastically across distinct anatomical and
+pathological tumor sub-regions
+@su2024mutual @lu2024enhancing @zhou2026bufnet @jin2025advancements. In
+multi-modal brain tumor MRI, Whole Tumor (WT) typically spans a larger spatial
+volume and displays salient hyperintense boundaries on FLAIR sequences,
+enabling semi-supervised models to produce relatively stable, low-entropy
+pseudo-labels for this outer boundary @zhou2026bufnet @xing2025msam. In stark
+contrast, the internal sub-compartments—the Tumor Core (TC) and Enhancing
+Tumor (ET)—are structurally delicate, spatially localized, and characterized
+by low intensity contrast and infiltrative boundaries
+@zhou2026bufnet @wang2021brain. As a consequence, pseudo-labels corresponding
+to TC and ET suffer from high aleatoric and epistemic uncertainty, yielding
+severe boundary fragmentation and false-negative errors
+@jin2025advancements @lu2024enhancing @zhou2026bufnet. Applying global
+confidence thresholds or uniform consistency losses invariably favors the
+easily segmented WT boundary while leaving the fragile TC and ET structures
+corrupted or excluded from supervision. This disparity demonstrates that
+effective pseudo-label refinement must be explicitly region-aware,
+structure-sensitive, and aligned with the hierarchical composition of
+intracranial lesions.
+
+== Research Gap and Position of the Proposed Method
+
+A rigorous synthesis of the existing literature reveals a clear trajectory of
+methodological developments and their associated bottlenecks:
+Fully supervised deep architectures exhibit remarkable segmentation fidelity
+on multi-modal benchmarks, yet their real-world applicability is constrained by
+the prohibitive clinical burden of acquiring voxel-wise specialist annotations.
+Semi-supervised learning addresses this annotation barrier by leveraging
+unannotated scans, but traditional self-training and consistency regularization
+frameworks remain vulnerable to pseudo-label noise, error propagation, and
+confirmation bias. While uncertainty-guided heuristics and confidence filtering
+have been introduced to suppress label noise, existing approaches treat all
+voxels or regions uniformly, failing to account for the pronounced disparity
+in pseudo-label quality across hierarchical tumor sub-regions, where Whole
+Tumor pseudo-labels are predominantly reliable, whereas Tumor Core and
+Enhancing Tumor pseudo-labels are highly uncertain and noise-corrupted.
+
+Simultaneously, although 3D medical foundation models such as SAM-Med3D
+encapsulate rich volumetric shape and structural representations, their
+inability to perform prompt-free inference or multi-class semantic reasoning
+prevents them from serving as standalone clinical segmenters. Recent hybrid
+paradigms, such as SemiSAM+ @zhang2025semisam, demonstrate that foundation models
+can serve as generalist teachers to guide specialist segmentation models in a
+collaborative manner. However, SemiSAM+ estimates prediction uncertainty
+primarily through prompt perturbation variance, lacking explicit region-level
+reliability verification and hierarchical refinement mechanisms tailored to
+multi-class brain tumors. Conversely, existing uncertainty-driven SSL methods
+(e.g., UPC @lu2023uncertainty, CCE @lu2024enhancing, and Mutual Learning
+@su2024mutual) operate strictly within conventional convolutional or transformer
+backbones, failing to leverage the powerful pre-trained spatial priors available
+within modern 3D foundation models. Consequently, the development of a unified
+framework that combines multi-region reliability assessment, structure-aware
+foundation model refinement, and hierarchical topological dependencies remains an
+unaddressed research gap.
+
+To resolve these interconnected limitations, this paper proposes *“Structure-Aware
+Semi-Supervised Brain Tumor Segmentation Using Hierarchical Pseudo-Label
+Refinement with SAM-Med3D”*. Rather than discarding uncertain pseudo-labels or
+blindly trusting foundation model outputs, the proposed framework is designed to
+utilize SAM-Med3D as a targeted, structure-aware volumetric refiner guided by an
+explicit region-level reliability mechanism. The proposed method establishes
+three distinct core components:
+
+1. The framework introduces a *region-level reliability assessment* mechanism
+   that evaluates the semantic confidence and structural stability of generated
+   pseudo-labels independently across each tumor sub-region (WT, TC, and ET),
+   superseding traditional uniform voxel-wise thresholds.
+
+2. The method formulates a *region-adaptive Accept / Refine / Reject strategy*
+   leveraging SAM-Med3D. Specifically, pseudo-label sub-regions exhibiting high
+   reliability scores are accepted directly to supervise the student network;
+   sub-regions with moderate reliability, which typically encompass ambiguous,
+   infiltrative margins, are designated for refinement, where structural
+   bounding prompts are automatically extracted from the candidate masks to
+   prompt SAM-Med3D, leveraging its 3D spatial priors to sharpen boundaries and
+   rectify topological inconsistencies; and severely corrupted sub-regions with
+   low reliability scores are strictly rejected and masked out from the training
+   objective to prevent error accumulation and confirmation bias.
+
+3. The refinement workflow is executed through a *hierarchical refinement
+   pathway* reflecting neuro-oncological structural nesting, progressing
+   systematically from the global anatomical envelope to localized inner
+   lesions ($"WT" -> "TC" -> "ET"$). By constraining internal core and
+   enhancing lesion candidates within the geometrically validated whole tumor
+   boundary, the framework enforces anatomical plausibility and eliminates
+   biologically invalid outlier predictions.
+
+Through this cohesive design, the refined, high-fidelity pseudo-labels generated
+by the tripartite foundation-guided pipeline are utilized to train an automated
+3D specialist segmentation model (such as a 3D U-Net or SwinUNETR). Once trained,
+the specialist network performs fully automated, prompt-free volumetric
+segmentation during clinical deployment, eliminating all requirements for
+manual interaction while achieving high precision under limited annotation
+budgets.

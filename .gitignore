@@ -78,3 +78,8 @@ data/processed/
 # (Keep documentation and summaries in docs/ and references/README.md)
 references/papers/
 *.pdf
+
+# Local draft notes and generated bibliography
+benerin.txt
+refs.bib
+*.bib
