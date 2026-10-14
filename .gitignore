@@ -79,7 +79,8 @@ data/processed/
 references/papers/
 *.pdf
 
-# Local draft notes and generated bibliography
+# Local draft notes, scratchpads, and bibliographies
+Catatan.txt
 benerin.txt
 refs.bib
 *.bib

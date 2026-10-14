@@ -388,7 +388,7 @@ three distinct core components:
 3. The refinement workflow is executed through a *hierarchical refinement
    pathway* reflecting neuro-oncological structural nesting, progressing
    systematically from the global anatomical envelope to localized inner
-   lesions ($"WT" -> "TC" -> "ET"$). By constraining internal core and
+   lesions ($WT arrow TC arrow ET$). By constraining internal core and
    enhancing lesion candidates within the geometrically validated whole tumor
    boundary, the framework enforces anatomical plausibility and eliminates
    biologically invalid outlier predictions.

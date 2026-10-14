@@ -102,7 +102,8 @@ semi-supervised-brain-tumor-segmentation/
 ├── notebooks/
 │   ├── 01_brats_dataset_exploration.ipynb # Interactive exploration, NIfTI inspection & 3D visualizations
 │   ├── 02_medsam_brain_tumor_segmentation.ipynb # MedSAM zero-shot prompting, PEFT fine-tuning & sub-region evaluation
-│   └── 03_2d_vs_3d_medsam_analysis.ipynb # 2D slice stacking vs Native 3D vs Tri-Planar 2.5D consensus analysis
+│   ├── 03_2d_vs_3d_medsam_analysis.ipynb # 2D slice stacking vs Native 3D vs Tri-Planar 2.5D consensus analysis
+│   └── 04_hierarchical_pseudolabel_refinement.ipynb # Hierarchy-aware pseudo-labeling & SAM-Med3D refinement
 ├── references/
 │   ├── papers/                      # Research paper PDFs (gitignored for repository hygiene)
 │   └── README.md                    # Literature index of all 23 reference papers
@@ -119,12 +120,18 @@ semi-supervised-brain-tumor-segmentation/
 │   │   └── segmentation_heads.py    # Combined Dice-CE loss & prediction heads
 │   ├── semi_supervised/
 │   │   ├── consistency.py           # Consistency loss & sigmoid rampup schedules
-│   │   └── mean_teacher.py          # Mean Teacher framework with EMA updates
+│   │   ├── decision_engine.py       # Tri-way decision triage (ACCEPT, REFINE, REJECT)
+│   │   ├── hierarchical_pipeline.py # End-to-end pseudo-labeling & refinement pipeline
+│   │   ├── hierarchical_prompter.py # Coarse-to-fine SAM refiner (WT -> TC -> ET)
+│   │   ├── hierarchy.py             # Anatomical hierarchy verification (ET ⊆ TC ⊆ WT)
+│   │   ├── mean_teacher.py          # Mean Teacher framework with EMA updates
+│   │   └── reliability.py           # Shannon entropy & regional reliability metrics
 │   └── utils/
 │       ├── metrics.py               # Dice score, HD95, and sub-region aggregations
 │       └── visualization.py         # Multi-slice & tri-planar visualization utilities
 ├── tests/
-│   └── test_dataset_loader.py       # Unit tests for data pipeline verification
+│   ├── test_dataset_loader.py       # Unit tests for data pipeline verification
+│   └── test_hierarchy_and_decision.py # Unit tests for hierarchy, reliability & decision engine
 ├── environment.yml                  # Conda environment specification
 ├── requirements.txt                 # Pip dependency list
 ├── LICENSE                          # MIT License
@@ -196,6 +203,20 @@ jupyter notebook notebooks/03_2d_vs_3d_medsam_analysis.ipynb
 - 📦 **Prompting Burden Quantification:** Comparing 1 single 3D bounding box prompt vs 50+ individual 2D slice boxes.
 - 💡 **Tri-Planar 2.5D Consensus Solution:** Multi-view orthogonal fusion that eliminates staircase artifacts while running smoothly on consumer 4GB VRAM GPUs.
 - 📝 **Paper Blueprint:** Methodological decision matrix for publication-grade research.
+
+### 4. Hierarchy-Aware Pseudo-Labeling & Foundation Model Refinement
+Launch to run the complete research framework with anatomical constraint verification and tri-way decision engine:
+```bash
+jupyter notebook notebooks/04_hierarchical_pseudolabel_refinement.ipynb
+```
+- 🧬 **Anatomical Constraint Verification:** Enforcing diffuse glioma biology: $\text{ET} \subseteq \text{TC} \subseteq \text{WT}$.
+- 📐 **Hierarchy Violation Index (HVI):** Quantitative metric measuring physical tissue containment leaks.
+- 📉 **Uncertainty & Reliability Metrics:** Shannon entropy $H(x)$ and prediction margin $M(x)$ aggregated over tumor sub-regions.
+- 🚦 **Tri-Way Decision Engine (ACCEPT / REFINE / REJECT):**
+  - **ACCEPT:** High reliability & zero violation $\rightarrow$ Directly adopt pseudo-label.
+  - **REFINE:** Hierarchy leak or moderate uncertainty $\rightarrow$ Route to SAM-Med3D refiner.
+  - **REJECT:** Severe noise / low confidence $\rightarrow$ Discard from current epoch loss.
+- 🔄 **Coarse-to-Fine Hierarchical SAM Refinement:** Sequential refinement ($WT \rightarrow TC \rightarrow ET$) with guaranteed nested containment and multi-class BraTS pseudo-label assembly.
 
 ---
 
