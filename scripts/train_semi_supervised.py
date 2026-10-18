@@ -68,7 +68,7 @@ def main():
     parser = argparse.ArgumentParser(description="Hierarchy-Aware Semi-Supervised Segmentation (Single U-Net + SAM Refiner)")
     parser.add_argument("--config", type=str, default="configs/default_config.yaml", help="Path to config file")
     parser.add_argument("--ratio", type=str, default="ratio_10",
-                        choices=["ratio_10", "ratio_20", "ratio_30", "ratio_50", "ratio_100"],
+                        choices=["ratio_10", "ratio_20", "ratio_30", "ratio_40", "ratio_50", "ratio_100"],
                         help="Labeled split ratio key")
     parser.add_argument("--epochs", type=int, default=30, help="Total training epochs (default: 30)")
     parser.add_argument("--warmup_epochs", type=int, default=10, help="Warmup epochs on labeled data only (default: 10)")
@@ -159,19 +159,6 @@ def main():
     epochs = args.epochs
     warmup_epochs = min(args.warmup_epochs, epochs // 2)
     best_val_dice = 0.0
-    best_metrics = {'WT': 0.0, 'TC': 0.0, 'ET': 0.0, 'Mean': 0.0}
-    warmup_baseline_dice = 0.0
-    history = {
-        'ratio': args.ratio,
-        'warmup_epochs': warmup_epochs,
-        'total_epochs': epochs,
-        'retrain_loss': [],
-        'val_epochs': [],
-        'val_dice_wt': [],
-        'val_dice_tc': [],
-        'val_dice_et': [],
-        'val_dice_mean': []
-    }
 
     print(f"\nTraining Plan:")
     print(f"  - Phase 1 (Warmup on Labeled)       : Epoch 1 to {warmup_epochs}")
@@ -224,8 +211,8 @@ def main():
             v_preds = torch.argmax(v_logits, dim=1)
             for b in range(v_preds.shape[0]):
                 m = evaluate_brats_subregions(v_preds[b].cpu().numpy(), v_masks[b].cpu().numpy())
-    warmup_baseline_dice = float(np.mean(warmup_dices))
-    print(f"   >> Warm-up Mean Dice: {warmup_baseline_dice*100:.2f}%\n")
+                warmup_dices.append(m['Dice_Mean'])
+    print(f"   >> Warm-up Mean Dice: {np.mean(warmup_dices)*100:.2f}%\n")
 
     # =========================================================================
     # PHASE 2: Predict Unlabeled -> Reliability & Hierarchy Check -> Decision Engine -> SAM Refine
@@ -401,76 +388,24 @@ def main():
             print(f"   WT Dice: {mean_wt*100:.2f}% | TC Dice: {mean_tc*100:.2f}% | ET Dice: {mean_et*100:.2f}%")
             print(f"   >> Mean Dice: {mean_dice*100:.2f}%")
 
-            history['val_epochs'].append(epoch)
-            history['val_dice_wt'].append(mean_wt)
-            history['val_dice_tc'].append(mean_tc)
-            history['val_dice_et'].append(mean_et)
-            history['val_dice_mean'].append(mean_dice)
-
             if mean_dice > best_val_dice:
                 best_val_dice = mean_dice
-                best_metrics = {'WT': mean_wt, 'TC': mean_tc, 'ET': mean_et, 'Mean': mean_dice}
                 ckpt_path = os.path.join(exp_dir, "best_model.pth")
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'best_mean_dice': best_val_dice,
-                    'metrics': best_metrics,
+                    'metrics': {'WT': mean_wt, 'TC': mean_tc, 'ET': mean_et, 'Mean': mean_dice},
                     'ratio': args.ratio,
                     'config': cfg
                 }, ckpt_path)
                 print(f"   [SAVED] New best model checkpoint: {ckpt_path}\n")
 
-    # Save comprehensive results JSON & training history
-    results_summary = {
-        'experiment_name': f"semi_supervised_brats_{args.ratio}",
-        'ratio': args.ratio,
-        'labeled_patients': partition['num_labeled'],
-        'unlabeled_patients': partition['num_unlabeled'],
-        'validation_patients': len(splits['val']),
-        'total_epochs': epochs,
-        'warmup_epochs': warmup_epochs,
-        'warmup_baseline_mean_dice': warmup_baseline_dice,
-        'triage_summary': {
-            'ACCEPT': counts['ACCEPT'],
-            'REFINE': counts['REFINE'],
-            'REJECT': counts['REJECT'],
-            'total_unlabeled': total_unlabeled,
-            'accept_pct': counts['ACCEPT'] / max(1, total_unlabeled) * 100.0,
-            'refine_pct': counts['REFINE'] / max(1, total_unlabeled) * 100.0,
-            'reject_pct': counts['REJECT'] / max(1, total_unlabeled) * 100.0,
-            'total_pseudo_labels_retained': len(pseudo_labeled_pool)
-        },
-        'final_best_metrics': {
-            'WT_Dice': best_metrics['WT'],
-            'TC_Dice': best_metrics['TC'],
-            'ET_Dice': best_metrics['ET'],
-            'Mean_Dice': best_metrics['Mean']
-        },
-        'improvement_over_warmup': best_val_dice - warmup_baseline_dice
-    }
-
-    results_file = os.path.join(exp_dir, "experiment_results.json")
-    with open(results_file, 'w', encoding='utf-8') as f:
-        json.dump(results_summary, f, indent=2)
-
-    history_file = os.path.join(exp_dir, "training_history.json")
-    with open(history_file, 'w', encoding='utf-8') as f:
-        json.dump(history, f, indent=2)
-
     print("\n=======================================================")
     print("[COMPLETE] Pipeline Finished Successfully!")
-    print(f"  • Ratio Regime               : {args.ratio} ({partition['num_labeled']} labeled patients)")
-    print(f"  • Warm-up Baseline Mean Dice : {warmup_baseline_dice*100:.2f}%")
-    print(f"  • Final Best Mean Dice       : {best_val_dice*100:.2f}% (+{(best_val_dice - warmup_baseline_dice)*100:+.2f}%)")
-    print(f"    - WT Dice                  : {best_metrics['WT']*100:.2f}%")
-    print(f"    - TC Dice                  : {best_metrics['TC']*100:.2f}%")
-    print(f"    - ET Dice                  : {best_metrics['ET']*100:.2f}%")
-    print(f"  • Saved Files in: {exp_dir}")
-    print(f"    1. best_model.pth          (PyTorch Model Weights)")
-    print(f"    2. experiment_results.json (Paper Table Benchmark Data)")
-    print(f"    3. training_history.json   (Loss & Dice Progression Curves)")
+    print(f"  • Best Validation Mean Dice : {best_val_dice*100:.2f}%")
+    print(f"  • Model Checkpoint Saved To : {exp_dir}")
     print("=======================================================\n")
 
 
