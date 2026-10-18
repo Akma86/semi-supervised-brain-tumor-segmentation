@@ -188,7 +188,7 @@ class HierarchicalSAMRefiner:
                     pass
 
         # -------------------------------------------------------------
-        # Stage 2: Refine Tumor Core (TC) - Constrained strictly inside WT
+        # Stage 2: Refine Tumor Core (TC) - Guided strictly inside refined WT
         # -------------------------------------------------------------
         if is_torch:
             tc_constrained = (raw_tc > 0.5).float() * refined_wt
@@ -198,7 +198,8 @@ class HierarchicalSAMRefiner:
             refined_tc = tc_constrained
 
         if self.has_sam and self.predictor is not None and rgb_image is not None:
-            box_tc = extract_2d_bounding_box(raw_tc, margin=self.margin)
+            # The prompt box for TC is derived from tc_constrained, ensuring WT guides TC
+            box_tc = extract_2d_bounding_box(tc_constrained, margin=self.margin)
             if box_tc is not None:
                 try:
                     masks, _, _ = self.predictor.predict(box=box_tc[None, :], multimask_output=False)
@@ -208,7 +209,7 @@ class HierarchicalSAMRefiner:
                     pass
 
         # -------------------------------------------------------------
-        # Stage 3: Refine Enhancing Tumor (ET) - Constrained strictly inside TC
+        # Stage 3: Refine Enhancing Tumor (ET) - Guided strictly inside refined TC
         # -------------------------------------------------------------
         if is_torch:
             et_constrained = (raw_et > 0.5).float() * refined_tc
@@ -218,7 +219,8 @@ class HierarchicalSAMRefiner:
             refined_et = et_constrained
 
         if self.has_sam and self.predictor is not None and rgb_image is not None:
-            box_et = extract_2d_bounding_box(raw_et, margin=self.margin)
+            # The prompt box for ET is derived from et_constrained, ensuring TC guides ET
+            box_et = extract_2d_bounding_box(et_constrained, margin=self.margin)
             if box_et is not None:
                 try:
                     masks, _, _ = self.predictor.predict(box=box_et[None, :], multimask_output=False)

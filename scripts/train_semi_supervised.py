@@ -333,22 +333,20 @@ def main():
         for batch in pbar:
             imgs = batch['image'].to(device).float()
             masks = batch['mask'].to(device).long()
-            weights = batch['weight'].to(device).float().view(-1, 1, 1)
+            weights = batch['weight'].to(device).float()
 
             optimizer.zero_grad()
             if scaler is not None:
                 with torch.amp.autocast('cuda'):
                     logits = model(imgs)
-                    base_loss = criterion(logits, masks)
-                    # Apply triage confidence weighting
-                    loss = base_loss * weights.mean()
+                    # Rigorous sample-wise loss weighting (no batch bleeding)
+                    loss = criterion(logits, masks, sample_weights=weights)
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 logits = model(imgs)
-                base_loss = criterion(logits, masks)
-                loss = base_loss * weights.mean()
+                loss = criterion(logits, masks, sample_weights=weights)
                 loss.backward()
                 optimizer.step()
 
