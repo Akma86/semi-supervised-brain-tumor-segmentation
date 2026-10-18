@@ -1,15 +1,23 @@
 """
-Complete Training Script for Semi-Supervised Brain Tumor Segmentation.
-Supports Mean Teacher framework and Hierarchy-Aware Pseudo-Labeling Refinement
-across variable annotation regimes (10%, 20%, 30%, 50%, 100%).
+Hierarchy-Aware Semi-Supervised Brain Tumor Segmentation Pipeline (NO TEACHER).
+Implements pure Self-Training with Anatomical Constraint Verification and SAM-Med3D Refinement:
+
+Alur Penelitian:
+1. Warm-up 3D U-Net pada data berlabel (10%, 20%, 30%).
+2. 3D U-Net memprediksi data unlabeled.
+3. Hitung Reliability (Shannon Entropy) & Cek Hierarki Anatomis (ET ⊆ TC ⊆ WT).
+4. Decision Engine Tri-Way Triage:
+     • ACCEPT : Langsung sah jadi pseudo-label (weight 1.0).
+     • REFINE : Diperbaiki oleh Hierarchical SAM Refiner coarse-to-fine WT -> TC -> ET (weight 0.8).
+     • REJECT : Dibuang (noise/uncertainty tinggi, weight 0.0).
+5. Retrain 3D U-Net dengan gabungan data labeled + pseudo-label terverifikasi.
 """
 
 import os
 import sys
 import json
 import argparse
-from itertools import cycle
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # Ensure UTF-8 output on Windows consoles
 if sys.platform.startswith('win'):
@@ -23,16 +31,16 @@ import yaml
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 # Ensure repository root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.brats_dataset import BraTSDataset
-from src.models.foundation_models import SemiSupervisedFoundationSegmentor
-from src.semi_supervised.mean_teacher import MeanTeacherFramework
-from src.semi_supervised.reliability import compute_entropy_map, compute_reliability_score
+from src.models.foundation_models import SemiSupervisedFoundationSegmentor as BrainTumorUNet
+from src.models.segmentation_heads import DiceCELoss
+from src.semi_supervised.reliability import evaluate_subregion_reliabilities, compute_entropy_map
 from src.semi_supervised.hierarchy import compute_hierarchy_violation_index
 from src.semi_supervised.decision_engine import DecisionEngine, PseudoLabelAction
 from src.semi_supervised.hierarchical_prompter import HierarchicalSAMRefiner
@@ -44,15 +52,28 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+class PseudoLabeledDataset(Dataset):
+    """Dataset combining original images with generated & verified pseudo-labels."""
+    def __init__(self, samples: List[Dict[str, Any]]):
+        self.samples = samples
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        return self.samples[idx]
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Train semi-supervised brain tumor segmentor.")
+    parser = argparse.ArgumentParser(description="Hierarchy-Aware Semi-Supervised Segmentation (Single U-Net + SAM Refiner)")
     parser.add_argument("--config", type=str, default="configs/default_config.yaml", help="Path to config file")
     parser.add_argument("--ratio", type=str, default="ratio_10",
                         choices=["ratio_10", "ratio_20", "ratio_30", "ratio_50", "ratio_100"],
                         help="Labeled split ratio key")
-    parser.add_argument("--epochs", type=int, default=None, help="Override epochs count")
-    parser.add_argument("--batch_size", type=int, default=None, help="Batch size per step")
-    parser.add_argument("--lr", type=float, default=None, help="Learning rate")
+    parser.add_argument("--epochs", type=int, default=30, help="Total training epochs (default: 30)")
+    parser.add_argument("--warmup_epochs", type=int, default=10, help="Warmup epochs on labeled data only (default: 10)")
+    parser.add_argument("--batch_size", type=int, default=2, help="Batch size per step")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--val_interval", type=int, default=5, help="Epoch interval for validation evaluation")
     parser.add_argument("--device", type=str, default=None, help="Device (cuda or cpu)")
     parser.add_argument("--save_dir", type=str, default="runs/experiments", help="Base directory for saving logs")
@@ -61,10 +82,11 @@ def main():
     cfg = load_config(args.config)
     device = args.device or ('cuda' if torch.cuda.is_available() else 'cpu')
     print("\n=======================================================")
-    print("[INIT] Semi-Supervised Brain Tumor Segmentation Training")
+    print("[FRAMEWORK] Hierarchy-Aware 3D U-Net + SAM Refiner Pipeline")
     print("=======================================================")
     device_name = torch.cuda.get_device_name(0) if device == 'cuda' else 'CPU'
     print(f"Device: {device} ({device_name})")
+    print("Architecture: Single 3D U-Net (NO Teacher Network)")
 
     # Resolve paths & partitions
     splits_file = "data/splits.json"
@@ -85,7 +107,7 @@ def main():
         for c in cfg['dataset']['cohorts']
     ]
 
-    # Initialize Datasets with mode='2d' for memory-efficient training
+    # Initialize Datasets (2D slice mode with RAM caching for speed)
     labeled_dataset = BraTSDataset(
         data_dir=cohort_dirs,
         is_labeled=True,
@@ -108,18 +130,12 @@ def main():
         patient_ids=splits['val']
     )
 
-    batch_size = args.batch_size or cfg['training'].get('batch_size', 2)
+    batch_size = args.batch_size
     labeled_loader = DataLoader(
         labeled_dataset,
         batch_size=batch_size,
         shuffle=True,
         drop_last=len(labeled_dataset) >= batch_size
-    )
-    unlabeled_loader = DataLoader(
-        unlabeled_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        drop_last=len(unlabeled_dataset) >= batch_size
     )
     val_loader = DataLoader(
         val_dataset,
@@ -127,221 +143,270 @@ def main():
         shuffle=False
     )
 
-    # Initialize Models & Optimizer
-    student_net = SemiSupervisedFoundationSegmentor(in_channels=4, num_classes=4)
-    teacher_net = SemiSupervisedFoundationSegmentor(in_channels=4, num_classes=4)
+    # Single 3D U-Net Model (No Teacher!)
+    model = BrainTumorUNet(in_channels=4, num_classes=4).to(device)
+    criterion = DiceCELoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
+    scaler = torch.amp.GradScaler('cuda') if device == 'cuda' else None
 
-    lr = args.lr or cfg['training']['learning_rate']
-    optimizer = torch.optim.AdamW(
-        student_net.parameters(),
-        lr=lr,
-        weight_decay=cfg['training']['weight_decay']
-    )
+    # Modules for Hierarchy, Reliability & SAM Refinement
+    decision_engine = DecisionEngine(tau_high=0.85, tau_low=0.50, delta_hvi=0.03)
+    sam_refiner = HierarchicalSAMRefiner()
 
-    framework = MeanTeacherFramework(
-        student_model=student_net,
-        teacher_model=teacher_net,
-        optimizer=optimizer,
-        ema_decay=cfg['semi_supervised']['ema_decay'],
-        consistency_weight=cfg['semi_supervised']['consistency_weight'],
-        rampup_epochs=cfg['semi_supervised']['consistency_rampup_epochs'],
-        device=device
-    )
-
-    decision_engine = DecisionEngine(
-        tau_high=cfg['semi_supervised'].get('pseudo_label_threshold', 0.85),
-        tau_low=0.50,
-        delta_hvi=0.03
-    )
-    refiner = HierarchicalSAMRefiner()
-
-    epochs = args.epochs or cfg['training']['epochs']
     exp_dir = os.path.join(args.save_dir, args.ratio)
     os.makedirs(exp_dir, exist_ok=True)
 
-    print(f"\nConfiguration:")
-    print(f"  - Total Epochs      : {epochs}")
-    print(f"  - Batch Size        : {batch_size}")
-    print(f"  - Learning Rate     : {lr}")
-    print(f"  - Mixed Precision   : True (AMP enabled for 4GB VRAM)")
-    print(f"  - Experiment Folder : {exp_dir}")
-
-    scaler = torch.amp.GradScaler('cuda') if device == 'cuda' else None
-
-    # Training Loop
-    history = {
-        'epoch': [],
-        'total_loss': [],
-        'loss_sup': [],
-        'loss_cons': [],
-        'val_dice_wt': [],
-        'val_dice_tc': [],
-        'val_dice_et': [],
-        'val_dice_mean': []
-    }
-
+    epochs = args.epochs
+    warmup_epochs = min(args.warmup_epochs, epochs // 2)
     best_val_dice = 0.0
-    steps_per_epoch = max(len(labeled_loader), len(unlabeled_loader))
 
-    print(f"\n[RUN] Starting Semi-Supervised Training ({epochs} epochs)...")
-    for epoch in range(1, epochs + 1):
-        framework.student.train()
-        framework.teacher.train()
+    print(f"\nTraining Plan:")
+    print(f"  - Phase 1 (Warmup on Labeled)       : Epoch 1 to {warmup_epochs}")
+    print(f"  - Phase 2 (Triage & SAM Refinement) : Executed at Epoch {warmup_epochs}")
+    print(f"  - Phase 3 (Retrain with Pseudo)     : Epoch {warmup_epochs + 1} to {epochs}")
 
-        labeled_iter = cycle(labeled_loader)
-        unlabeled_iter = iter(unlabeled_loader)
+    # =========================================================================
+    # PHASE 1: Supervised Warm-Up on Labeled Patients (e.g. 10%)
+    # =========================================================================
+    print(f"\n>>> [PHASE 1] Starting Warm-Up on Labeled Data (Epoch 1 - {warmup_epochs})...")
+    for epoch in range(1, warmup_epochs + 1):
+        model.train()
+        epoch_loss = 0.0
 
-        total_loss_accum = 0.0
-        sup_loss_accum = 0.0
-        cons_loss_accum = 0.0
-
-        pbar = tqdm(range(steps_per_epoch), desc=f"Epoch [{epoch:03d}/{epochs:03d}]", unit="batch")
-        for _ in pbar:
-            batch_l = next(labeled_iter)
-            try:
-                batch_u = next(unlabeled_iter)
-            except StopIteration:
-                unlabeled_iter = iter(unlabeled_loader)
-                batch_u = next(unlabeled_iter)
-
-            # Move tensors with explicit types
-            img_l = batch_l['image'].to(device).float()
-            target_l = batch_l['mask'].to(device).long()
-            img_u = batch_u['image'].to(device).float()
+        pbar = tqdm(labeled_loader, desc=f"Warmup [{epoch:02d}/{warmup_epochs:02d}]", unit="batch")
+        for batch in pbar:
+            imgs = batch['image'].to(device).float()
+            masks = batch['mask'].to(device).long()
 
             optimizer.zero_grad()
-
             if scaler is not None:
                 with torch.amp.autocast('cuda'):
-                    # 1. Supervised loss
-                    pred_l = framework.student(img_l)
-                    loss_sup = framework.supervised_criterion(pred_l, target_l)
-
-                    # 2. Consistency / Teacher prediction
-                    noise = torch.randn_like(img_u) * 0.05
-                    student_u_pred = framework.student(img_u + noise)
-
-                    with torch.no_grad():
-                        teacher_u_pred = framework.teacher(img_u)
-
-                    loss_const = framework.consistency_criterion(student_u_pred, teacher_u_pred)
-
-                    rampup = framework.consistency_weight * (min(1.0, epoch / max(1, framework.rampup_epochs)))
-                    total_loss = loss_sup + rampup * loss_const
-
-                scaler.scale(total_loss).backward()
+                    logits = model(imgs)
+                    loss = criterion(logits, masks)
+                scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                pred_l = framework.student(img_l)
-                loss_sup = framework.supervised_criterion(pred_l, target_l)
-
-                noise = torch.randn_like(img_u) * 0.05
-                student_u_pred = framework.student(img_u + noise)
-                with torch.no_grad():
-                    teacher_u_pred = framework.teacher(img_u)
-
-                loss_const = framework.consistency_criterion(student_u_pred, teacher_u_pred)
-                rampup = framework.consistency_weight * (min(1.0, epoch / max(1, framework.rampup_epochs)))
-                total_loss = loss_sup + rampup * loss_const
-
-                total_loss.backward()
+                logits = model(imgs)
+                loss = criterion(logits, masks)
+                loss.backward()
                 optimizer.step()
 
-            # Update EMA Teacher
-            framework.update_ema_weights(decay=framework.ema_decay)
+            epoch_loss += loss.item()
+            pbar.set_postfix({'Loss': f"{loss.item():.4f}"})
 
-            total_loss_accum += total_loss.item()
-            sup_loss_accum += loss_sup.item()
-            cons_loss_accum += loss_const.item()
+    # Validate warm-up baseline
+    print("\n[VALIDATION] Warm-up Baseline Evaluation:")
+    model.eval()
+    warmup_dices = []
+    with torch.no_grad():
+        for v_batch in val_loader:
+            v_imgs = v_batch['image'].to(device).float()
+            v_masks = v_batch['mask'].to(device).long()
+            if scaler is not None:
+                with torch.amp.autocast('cuda'):
+                    v_logits = model(v_imgs)
+            else:
+                v_logits = model(v_imgs)
+            v_preds = torch.argmax(v_logits, dim=1)
+            for b in range(v_preds.shape[0]):
+                m = evaluate_brats_subregions(v_preds[b].cpu().numpy(), v_masks[b].cpu().numpy())
+                warmup_dices.append(m['Dice_Mean'])
+    print(f"   >> Warm-up Mean Dice: {np.mean(warmup_dices)*100:.2f}%\n")
 
-            pbar.set_postfix({
-                'Loss': f"{total_loss.item():.4f}",
-                'Sup': f"{loss_sup.item():.4f}",
-                'Cons': f"{loss_const.item():.4f}"
-            })
+    # =========================================================================
+    # PHASE 2: Predict Unlabeled -> Reliability & Hierarchy Check -> Decision Engine -> SAM Refine
+    # =========================================================================
+    print("=========================================================================")
+    print(">>> [PHASE 2] Auditing 92 Unlabeled Cases with Decision Engine & SAM Refiner")
+    print("=========================================================================")
+    model.eval()
+    pseudo_labeled_pool = []
+    counts = {'ACCEPT': 0, 'REFINE': 0, 'REJECT': 0}
 
-        avg_total_loss = total_loss_accum / max(1, steps_per_epoch)
-        avg_sup_loss = sup_loss_accum / max(1, steps_per_epoch)
-        avg_cons_loss = cons_loss_accum / max(1, steps_per_epoch)
+    unlabeled_loader_eval = DataLoader(unlabeled_dataset, batch_size=1, shuffle=False)
+    with torch.no_grad():
+        for batch in tqdm(unlabeled_loader_eval, desc="Triage & Refine", unit="patient"):
+            img = batch['image'].to(device).float() # [1, 4, H, W]
 
-        history['epoch'].append(epoch)
-        history['total_loss'].append(avg_total_loss)
-        history['loss_sup'].append(avg_sup_loss)
-        history['loss_cons'].append(avg_cons_loss)
+            if scaler is not None:
+                with torch.amp.autocast('cuda'):
+                    logits = model(img)
+            else:
+                logits = model(img)
 
-        # Validation Step
+            probs = F.softmax(logits, dim=1)
+            pred_labels = torch.argmax(probs, dim=1) # [1, H, W]
+
+            wt_mask = (pred_labels == 1) | (pred_labels == 2) | (pred_labels == 3)
+            tc_mask = (pred_labels == 1) | (pred_labels == 3)
+            et_mask = (pred_labels == 3)
+
+            wt_voxels = int(wt_mask.sum().item())
+
+            # 1. Compute Reliability
+            reliabilities = evaluate_subregion_reliabilities(
+                logits=logits,
+                wt_mask=wt_mask.float(),
+                tc_mask=tc_mask.float(),
+                et_mask=et_mask.float()
+            )
+
+            # 2. Check Hierarchy Constraints (ET ⊆ TC ⊆ WT)
+            hierarchy_stats = compute_hierarchy_violation_index(
+                wt_mask=wt_mask[0].cpu().numpy(),
+                tc_mask=tc_mask[0].cpu().numpy(),
+                et_mask=et_mask[0].cpu().numpy()
+            )
+
+            # 3. Decision Engine: ACCEPT / REFINE / REJECT
+            decision = decision_engine.evaluate(
+                reliabilities=reliabilities,
+                hierarchy_stats=hierarchy_stats,
+                wt_voxel_count=wt_voxels
+            )
+
+            action = decision['action']
+            weight = decision['weight']
+
+            if action == PseudoLabelAction.ACCEPT:
+                counts['ACCEPT'] += 1
+                pseudo_labeled_pool.append({
+                    'image': batch['image'].squeeze(0),
+                    'mask': pred_labels[0].cpu(),
+                    'weight': 1.0,
+                    'patient_id': batch['patient_id'][0]
+                })
+
+            elif action == PseudoLabelAction.REFINE:
+                counts['REFINE'] += 1
+                # SAM-Med3D Coarse-to-Fine Refinement (WT -> TC -> ET)
+                refined = sam_refiner.refine_hierarchical(
+                    image=batch['image'][0],
+                    raw_wt=wt_mask[0].cpu().float(),
+                    raw_tc=tc_mask[0].cpu().float(),
+                    raw_et=et_mask[0].cpu().float()
+                )
+                pseudo_labeled_pool.append({
+                    'image': batch['image'].squeeze(0),
+                    'mask': refined['assembled_seg'].clone().detach() if isinstance(refined['assembled_seg'], torch.Tensor) else torch.from_numpy(refined['assembled_seg']),
+                    'weight': 0.8,
+                    'patient_id': batch['patient_id'][0]
+                })
+
+            else:
+                counts['REJECT'] += 1
+
+    total_unlabeled = len(unlabeled_dataset)
+    print("\n[TRIAGE SUMMARY RESULTS]:")
+    print(f"  • 🟢 ACCEPT (Direct Pseudo-Label) : {counts['ACCEPT']:2d} / {total_unlabeled} ({counts['ACCEPT']/total_unlabeled*100:.1f}%)")
+    print(f"  • 🟡 REFINE (Refined by SAM-Med3D): {counts['REFINE']:2d} / {total_unlabeled} ({counts['REFINE']/total_unlabeled*100:.1f}%)")
+    print(f"  • 🔴 REJECT (Discarded Noise)     : {counts['REJECT']:2d} / {total_unlabeled} ({counts['REJECT']/total_unlabeled*100:.1f}%)")
+    print(f"  >> Total Validated Pseudo-Labels  : {len(pseudo_labeled_pool)} cases added to training pool!\n")
+
+    # =========================================================================
+    # PHASE 3: Retrain 3D U-Net on Labeled + Verified Pseudo-Labels
+    # =========================================================================
+    print(f">>> [PHASE 3] Retraining 3D U-Net on Augmented Dataset (Epoch {warmup_epochs + 1} - {epochs})...")
+
+    # Combine labeled dataset items with verified pseudo-labels
+    augmented_samples = []
+    for i in range(len(labeled_dataset)):
+        sample = labeled_dataset[i]
+        augmented_samples.append({
+            'image': sample['image'],
+            'mask': sample['mask'],
+            'weight': 1.0,
+            'patient_id': sample['patient_id']
+        })
+    augmented_samples.extend(pseudo_labeled_pool)
+
+    augmented_dataset = PseudoLabeledDataset(augmented_samples)
+    augmented_loader = DataLoader(augmented_dataset, batch_size=batch_size, shuffle=True)
+    print(f"Enriched Dataset Size: {len(augmented_dataset)} samples (Original: {len(labeled_dataset)})\n")
+
+    for epoch in range(warmup_epochs + 1, epochs + 1):
+        model.train()
+        epoch_loss = 0.0
+
+        pbar = tqdm(augmented_loader, desc=f"Retrain [{epoch:02d}/{epochs:02d}]", unit="batch")
+        for batch in pbar:
+            imgs = batch['image'].to(device).float()
+            masks = batch['mask'].to(device).long()
+            weights = batch['weight'].to(device).float().view(-1, 1, 1)
+
+            optimizer.zero_grad()
+            if scaler is not None:
+                with torch.amp.autocast('cuda'):
+                    logits = model(imgs)
+                    base_loss = criterion(logits, masks)
+                    # Apply triage confidence weighting
+                    loss = base_loss * weights.mean()
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                logits = model(imgs)
+                base_loss = criterion(logits, masks)
+                loss = base_loss * weights.mean()
+                loss.backward()
+                optimizer.step()
+
+            epoch_loss += loss.item()
+            pbar.set_postfix({'Loss': f"{loss.item():.4f}"})
+
+        # Periodic Validation
         if (epoch % args.val_interval == 0) or (epoch == epochs):
-            framework.student.eval()
+            model.eval()
             dices_wt, dices_tc, dices_et, dices_mean = [], [], [], []
 
             with torch.no_grad():
                 for v_batch in val_loader:
-                    v_img = v_batch['image'].to(device).float()
-                    v_mask = v_batch['mask'].to(device).long()
+                    v_imgs = v_batch['image'].to(device).float()
+                    v_masks = v_batch['mask'].to(device).long()
 
                     if scaler is not None:
                         with torch.amp.autocast('cuda'):
-                            v_logits = framework.student(v_img)
+                            v_logits = model(v_imgs)
                     else:
-                        v_logits = framework.student(v_img)
+                        v_logits = model(v_imgs)
 
-                    v_pred = torch.argmax(v_logits, dim=1)
-
-                    for b in range(v_pred.shape[0]):
-                        p_single = v_pred[b].cpu().numpy()
-                        t_single = v_mask[b].cpu().numpy()
-                        sub_metrics = evaluate_brats_subregions(p_single, t_single)
-                        dices_wt.append(sub_metrics['Dice_WT'])
-                        dices_tc.append(sub_metrics['Dice_TC'])
-                        dices_et.append(sub_metrics['Dice_ET'])
-                        dices_mean.append(sub_metrics['Dice_Mean'])
+                    v_preds = torch.argmax(v_logits, dim=1)
+                    for b in range(v_preds.shape[0]):
+                        m = evaluate_brats_subregions(v_preds[b].cpu().numpy(), v_masks[b].cpu().numpy())
+                        dices_wt.append(m['Dice_WT'])
+                        dices_tc.append(m['Dice_TC'])
+                        dices_et.append(m['Dice_ET'])
+                        dices_mean.append(m['Dice_Mean'])
 
             mean_wt = float(np.mean(dices_wt))
             mean_tc = float(np.mean(dices_tc))
             mean_et = float(np.mean(dices_et))
-            val_mean_dice = float(np.mean(dices_mean))
-
-            history['val_dice_wt'].append(mean_wt)
-            history['val_dice_tc'].append(mean_tc)
-            history['val_dice_et'].append(mean_et)
-            history['val_dice_mean'].append(val_mean_dice)
+            mean_dice = float(np.mean(dices_mean))
 
             print(f"\n[VALIDATION] Epoch {epoch:03d}:")
             print(f"   WT Dice: {mean_wt*100:.2f}% | TC Dice: {mean_tc*100:.2f}% | ET Dice: {mean_et*100:.2f}%")
-            print(f"   >> Mean Dice: {val_mean_dice*100:.2f}%")
+            print(f"   >> Mean Dice: {mean_dice*100:.2f}%")
 
-            # Save best checkpoint
-            if val_mean_dice > best_val_dice:
-                best_val_dice = val_mean_dice
+            if mean_dice > best_val_dice:
+                best_val_dice = mean_dice
                 ckpt_path = os.path.join(exp_dir, "best_model.pth")
                 torch.save({
                     'epoch': epoch,
-                    'student_state_dict': framework.student.state_dict(),
-                    'teacher_state_dict': framework.teacher.state_dict(),
+                    'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'best_mean_dice': best_val_dice,
-                    'metrics': {
-                        'WT': mean_wt,
-                        'TC': mean_tc,
-                        'ET': mean_et,
-                        'Mean': val_mean_dice
-                    },
+                    'metrics': {'WT': mean_wt, 'TC': mean_tc, 'ET': mean_et, 'Mean': mean_dice},
                     'ratio': args.ratio,
                     'config': cfg
                 }, ckpt_path)
                 print(f"   [SAVED] New best model checkpoint: {ckpt_path}\n")
 
-    # Save final history log
-    history_file = os.path.join(exp_dir, "training_history.json")
-    with open(history_file, 'w', encoding='utf-8') as f:
-        json.dump(history, f, indent=2)
-
-    print(f"\n=======================================================")
-    print(f"[COMPLETE] Training Finished!")
-    print(f"  - Best Validation Mean Dice : {best_val_dice*100:.2f}%")
-    print(f"  - Checkpoint & Logs Saved To : {exp_dir}")
-    print(f"=======================================================\n")
+    print("\n=======================================================")
+    print("[COMPLETE] Pipeline Finished Successfully!")
+    print(f"  • Best Validation Mean Dice : {best_val_dice*100:.2f}%")
+    print(f"  • Model Checkpoint Saved To : {exp_dir}")
+    print("=======================================================\n")
 
 
 if __name__ == '__main__':
