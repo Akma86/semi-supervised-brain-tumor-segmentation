@@ -151,12 +151,39 @@ class BraTSDataset(Dataset):
             # For unlabeled cases in semi-supervised training
             seg = np.zeros(image.shape[1:], dtype=np.int64)
 
-        sample = {
-            'image': torch.from_numpy(image),
-            'mask': torch.from_numpy(seg),
-            'patient_id': patient_id,
-            'is_labeled': self.is_labeled
-        }
+        if self.mode == '2d':
+            # Extract 2D axial slice along depth dimension
+            D = image.shape[-1]
+            if self.is_labeled and (seg > 0).any():
+                tumor_slices = np.where(seg.sum(axis=(0, 1)) > 0)[0]
+                if len(tumor_slices) > 0 and np.random.rand() < 0.8:
+                    z = int(np.random.choice(tumor_slices))
+                else:
+                    z = int(np.random.randint(20, max(21, D - 20)))
+            else:
+                brain_slices = np.where(image.sum(axis=(0, 1, 2)) > 10.0)[0]
+                if len(brain_slices) > 0:
+                    z = int(np.random.choice(brain_slices))
+                else:
+                    z = int(np.random.randint(20, max(21, D - 20)))
+
+            image_slice = image[:, :, :, z]
+            seg_slice = seg[:, :, z]
+
+            sample = {
+                'image': torch.from_numpy(image_slice).float(),
+                'mask': torch.from_numpy(seg_slice).long(),
+                'patient_id': patient_id,
+                'slice_idx': z,
+                'is_labeled': self.is_labeled
+            }
+        else:
+            sample = {
+                'image': torch.from_numpy(image).float(),
+                'mask': torch.from_numpy(seg).long(),
+                'patient_id': patient_id,
+                'is_labeled': self.is_labeled
+            }
 
         if self.transform is not None:
             sample = self.transform(sample)
