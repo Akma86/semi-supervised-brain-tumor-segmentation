@@ -10,12 +10,19 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-# Explicit Import of Medical Foundation Model (SAM / MedSAM)
+# Explicit Imports of Medical / Vision Foundation Models (SAM 1 & SAM 2)
 try:
     from segment_anything import sam_model_registry, SamPredictor
     HAS_SAM = True
 except ImportError:
     HAS_SAM = False
+
+try:
+    from sam2.build_sam import build_sam2
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
+    HAS_SAM2 = True
+except ImportError:
+    HAS_SAM2 = False
 
 
 def build_sam_rgb_input(mri_tensor: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
@@ -122,6 +129,8 @@ class HierarchicalSAMRefiner:
         self,
         checkpoint_path: Optional[str] = None,
         use_sam: bool = False,
+        sam_version: str = "sam2",
+        sam2_config: str = "configs/sam2.1/sam2.1_hiera_t.yaml",
         model_type: str = "vit_b",
         device: str = "cpu",
         margin: int = 4,
@@ -131,19 +140,52 @@ class HierarchicalSAMRefiner:
         self.margin = margin
         self.predictor = foundation_segmentor
         self.has_sam = (foundation_segmentor is not None)
+        self.sam_version = "Custom" if self.has_sam else "None"
 
-        if use_sam and HAS_SAM:
-            try:
-                if checkpoint_path and os.path.exists(checkpoint_path):
-                    sam = sam_model_registry[model_type](checkpoint=checkpoint_path)
-                else:
-                    sam = sam_model_registry[model_type]()
-                sam.to(device=device)
-                sam.eval()
-                self.predictor = SamPredictor(sam)
-                self.has_sam = True
-            except Exception:
-                self.has_sam = False
+        if use_sam and not self.has_sam:
+            # 1. MedSAM from Bowang Lab (Nature Communications 2024, specialized for medical MRI)
+            if sam_version == "medsam" and HAS_SAM:
+                try:
+                    ckpt = checkpoint_path or "medsam_repo/work_dir/MedSAM/medsam_vit_b.pth"
+                    if os.path.exists(ckpt):
+                        sam = sam_model_registry["vit_b"](checkpoint=ckpt)
+                    else:
+                        sam = sam_model_registry["vit_b"]()
+                    sam.to(device=device)
+                    sam.eval()
+                    self.predictor = SamPredictor(sam)
+                    self.has_sam = True
+                    self.sam_version = "MedSAM (Bowang-Lab ViT-B)"
+                except Exception:
+                    pass
+
+            # 2. Meta SAM 2 / SAM 2.1 (Hiera Backbone)
+            if sam_version == "sam2" and HAS_SAM2 and not self.has_sam:
+                try:
+                    ckpt = checkpoint_path or "sam2_repo/checkpoints/sam2.1_hiera_tiny.pt"
+                    cfg = sam2_config or "configs/sam2.1/sam2.1_hiera_t.yaml"
+                    if os.path.exists(ckpt):
+                        sam2_model = build_sam2(cfg, ckpt, device=device)
+                        self.predictor = SAM2ImagePredictor(sam2_model)
+                        self.has_sam = True
+                        self.sam_version = "Meta SAM 2.1 (Hiera)"
+                except Exception:
+                    pass
+
+            # 3. Fallback: Meta SAM 1 (ViT-B)
+            if not self.has_sam and HAS_SAM:
+                try:
+                    if checkpoint_path and os.path.exists(checkpoint_path):
+                        sam = sam_model_registry[model_type](checkpoint=checkpoint_path)
+                    else:
+                        sam = sam_model_registry[model_type]()
+                    sam.to(device=device)
+                    sam.eval()
+                    self.predictor = SamPredictor(sam)
+                    self.has_sam = True
+                    self.sam_version = f"SAM 1 ({model_type})"
+                except Exception:
+                    self.has_sam = False
 
     def refine_hierarchical(
         self,

@@ -26,15 +26,15 @@ class DecisionEngine:
       Discarded (gradient weight = 0) to prevent confirmation bias and model poisoning.
 
     Args:
-        tau_high: High reliability threshold (default: 0.85)
-        tau_low: Low reliability threshold (default: 0.50)
+        tau_high: High reliability threshold (default: 0.50, corresponding to ~80% top-class probability)
+        tau_low: Low reliability threshold (default: 0.15, corresponding to ~50% top-class probability)
         delta_hvi: Maximum allowable Hierarchy Violation Index (default: 0.03)
         min_tumor_voxels: Minimum tumor size threshold to reject pure empty noise (default: 20)
     """
     def __init__(
         self,
-        tau_high: float = 0.85,
-        tau_low: float = 0.50,
+        tau_high: float = 0.50,
+        tau_low: float = 0.15,
         delta_hvi: float = 0.03,
         min_tumor_voxels: int = 20
     ):
@@ -73,6 +73,7 @@ class DecisionEngine:
             return {
                 'action': PseudoLabelAction.REJECT,
                 'weight': 0.0,
+                'score': r_mean,
                 'reason': f"Tumor extent too small ({wt_voxel_count} voxels < {self.min_tumor_voxels}). Rejected to avoid false positives."
             }
 
@@ -80,12 +81,15 @@ class DecisionEngine:
             return {
                 'action': PseudoLabelAction.REJECT,
                 'weight': 0.0,
+                'score': r_mean,
                 'reason': f"Reliability score ({r_mean:.3f}) below rejection threshold ({self.tau_low:.2f}). Irreparable noise."
             }
 
         # 2. Condition: REFINE (Contains hierarchy violation OR moderate reliability)
         has_hierarchy_violation = (hvi_et > self.delta_hvi) or (hvi_tc > self.delta_hvi)
-        is_moderate_reliability = (r_mean < self.tau_high) or (r_tc < self.tau_high) or (r_et < self.tau_high)
+        # Check moderate reliability on present regions
+        has_subregion_uncertainty = (r_tc > 0 and r_tc < self.tau_high) or (r_et > 0 and r_et < self.tau_high)
+        is_moderate_reliability = (r_mean < self.tau_high) or has_subregion_uncertainty
 
         if has_hierarchy_violation:
             reason = (
@@ -95,6 +99,7 @@ class DecisionEngine:
             return {
                 'action': PseudoLabelAction.REFINE,
                 'weight': 0.8, # Scaled weight once refined
+                'score': r_mean,
                 'reason': reason
             }
 
@@ -106,6 +111,7 @@ class DecisionEngine:
             return {
                 'action': PseudoLabelAction.REFINE,
                 'weight': 0.8,
+                'score': r_mean,
                 'reason': reason
             }
 
@@ -113,6 +119,7 @@ class DecisionEngine:
         return {
             'action': PseudoLabelAction.ACCEPT,
             'weight': 1.0,
+            'score': r_mean,
             'reason': (
                 f"High reliability ({r_mean:.3f} >= {self.tau_high}) and compliant with "
                 f"hierarchy (HVI={hvi_total*100:.2f}% <= {self.delta_hvi*100:.1f}%). "

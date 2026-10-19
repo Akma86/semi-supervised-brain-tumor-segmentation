@@ -65,7 +65,7 @@ def create_splits(
     random.shuffle(train_all)
     n_train_total = len(train_all)
 
-    ratios = [0.10, 0.20, 0.30, 0.40, 0.50, 1.00]
+    ratios = [0.10, 0.20, 0.30, 0.40, 0.50, 0.80, 1.00]
     semi_supervised_partitions = {}
 
     for r in ratios:

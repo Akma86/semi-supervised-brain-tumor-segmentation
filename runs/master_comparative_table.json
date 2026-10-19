@@ -1,0 +1,63 @@
+{
+  "timestamp": "2026-10-19 17:07:46",
+  "total_duration": "0:52:36",
+  "sam_version": "medsam",
+  "comparison": {
+    "ratio_10": {
+      "labeled_patients": 10,
+      "unlabeled_patients": 92,
+      "supervised_mean_dice": 0.6384520061574709,
+      "supervised_metrics": {
+        "WT": 0.6276263207817796,
+        "TC": 0.6303827039840008,
+        "ET": 0.6573469937066322,
+        "Mean": 0.6384520061574709
+      },
+      "semi_supervised_mean_dice": 0.272161304304339,
+      "semi_supervised_metrics": {},
+      "absolute_gain": -0.3662907018531319
+    },
+    "ratio_20": {
+      "labeled_patients": 20,
+      "unlabeled_patients": 82,
+      "supervised_mean_dice": 0.6525910356492969,
+      "supervised_metrics": {
+        "WT": 0.6591163428874994,
+        "TC": 0.6461458585489249,
+        "ET": 0.6525109055114661,
+        "Mean": 0.6525910356492969
+      },
+      "semi_supervised_mean_dice": 0.5619432358062553,
+      "semi_supervised_metrics": {},
+      "absolute_gain": -0.09064779984304161
+    },
+    "ratio_40": {
+      "labeled_patients": 41,
+      "unlabeled_patients": 61,
+      "supervised_mean_dice": 0.6401280735434735,
+      "supervised_metrics": {
+        "WT": 0.6942425794324005,
+        "TC": 0.5811903529576488,
+        "ET": 0.6449512882403715,
+        "Mean": 0.6401280735434735
+      },
+      "semi_supervised_mean_dice": 0.6965473992449774,
+      "semi_supervised_metrics": {},
+      "absolute_gain": 0.056419325701503986
+    },
+    "ratio_80": {
+      "labeled_patients": 82,
+      "unlabeled_patients": 20,
+      "supervised_mean_dice": 0.6168594274460059,
+      "supervised_metrics": {
+        "WT": 0.7539984147775918,
+        "TC": 0.5420810897086399,
+        "ET": 0.5544987778517863,
+        "Mean": 0.6168594274460059
+      },
+      "semi_supervised_mean_dice": 0.6522601690905456,
+      "semi_supervised_metrics": {},
+      "absolute_gain": 0.03540074164453977
+    }
+  }
+}

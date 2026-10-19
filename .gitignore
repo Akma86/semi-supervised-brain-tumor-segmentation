@@ -54,7 +54,9 @@ weights/
 pretrained_models/
 
 # Experiment Logging & Artifacts
-runs/
+runs/*
+!runs/benchmark_master_results.xlsx
+!runs/master_comparative_table.json
 logs/
 wandb/
 mlruns/
@@ -62,6 +64,10 @@ lightning_logs/
 outputs/
 results/
 *.log
+
+# Third-party repos & foundation models
+sam2_repo/
+medsam_repo/
 
 # Medical Imaging Data & NIfTI Files (Keep repository lightweight)
 data/BraTS-Africa/

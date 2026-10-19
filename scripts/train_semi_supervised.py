@@ -68,7 +68,7 @@ def main():
     parser = argparse.ArgumentParser(description="Hierarchy-Aware Semi-Supervised Segmentation (Single U-Net + SAM Refiner)")
     parser.add_argument("--config", type=str, default="configs/default_config.yaml", help="Path to config file")
     parser.add_argument("--ratio", type=str, default="ratio_10",
-                        choices=["ratio_10", "ratio_20", "ratio_30", "ratio_40", "ratio_50", "ratio_100"],
+                        choices=["ratio_10", "ratio_20", "ratio_30", "ratio_40", "ratio_50", "ratio_80", "ratio_100"],
                         help="Labeled split ratio key")
     parser.add_argument("--epochs", type=int, default=30, help="Total training epochs (default: 30)")
     parser.add_argument("--warmup_epochs", type=int, default=10, help="Warmup epochs on labeled data only (default: 10)")
@@ -77,6 +77,14 @@ def main():
     parser.add_argument("--val_interval", type=int, default=5, help="Epoch interval for validation evaluation")
     parser.add_argument("--device", type=str, default=None, help="Device (cuda or cpu)")
     parser.add_argument("--save_dir", type=str, default="runs/experiments", help="Base directory for saving logs")
+    parser.add_argument("--use_sam", type=lambda x: str(x).lower() in ['true', '1', 'yes'], default=True, help="Enable SAM foundation model refinement in Phase 2 (default: True)")
+    parser.add_argument("--sam_version", type=str, default="medsam", choices=["medsam", "sam2", "sam1"], help="SAM model: medsam (Bowang-Lab ViT-B for MRI), sam2 (Meta SAM 2.1 Hiera), or sam1 (default: medsam)")
+    parser.add_argument("--sam2_config", type=str, default="configs/sam2.1/sam2.1_hiera_t.yaml", help="SAM 2 config path")
+    parser.add_argument("--sam_checkpoint", type=str, default=None, help="Path to SAM / MedSAM weights checkpoint")
+    parser.add_argument("--sam_model_type", type=str, default="vit_b", help="SAM 1 model type: vit_b, vit_l, vit_h (default: vit_b)")
+    parser.add_argument("--tau_high", type=float, default=0.50, help="High reliability threshold for ACCEPT (default: 0.50)")
+    parser.add_argument("--tau_low", type=float, default=0.15, help="Low reliability threshold for REJECT (default: 0.15)")
+    parser.add_argument("--max_pseudo_ratio", type=float, default=None, help="Optional max ratio of pseudo-labels to labeled samples (e.g. 2.0 to prevent drowning in ratio_10)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -149,9 +157,36 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
     scaler = torch.amp.GradScaler('cuda') if device == 'cuda' else None
 
-    # Modules for Hierarchy, Reliability & SAM Refinement
-    decision_engine = DecisionEngine(tau_high=0.85, tau_low=0.50, delta_hvi=0.03)
-    sam_refiner = HierarchicalSAMRefiner()
+    # Modules for Hierarchy, Reliability & SAM Refinement (Calibrated 4-class entropy scale)
+    decision_engine = DecisionEngine(tau_high=args.tau_high, tau_low=args.tau_low, delta_hvi=0.03)
+
+    # Resolve default SAM checkpoints if none provided explicitly
+    sam_ckpt = args.sam_checkpoint
+    if sam_ckpt is None:
+        if args.sam_version == "medsam":
+            default_medsam = "medsam_repo/work_dir/MedSAM/medsam_vit_b.pth"
+            if os.path.exists(default_medsam):
+                sam_ckpt = default_medsam
+        elif args.sam_version == "sam2":
+            default_sam2 = "sam2_repo/checkpoints/sam2.1_hiera_tiny.pt"
+            if os.path.exists(default_sam2):
+                sam_ckpt = default_sam2
+        else:
+            for default_ckpt in ["medsam_repo/work_dir/MedSAM/medsam_vit_b.pth", "checkpoints/medsam_vit_b.pth", "checkpoints/sam_vit_b_01ec64.pth"]:
+                if os.path.exists(default_ckpt):
+                    sam_ckpt = default_ckpt
+                    break
+
+    sam_refiner = HierarchicalSAMRefiner(
+        checkpoint_path=sam_ckpt,
+        use_sam=args.use_sam,
+        sam_version=args.sam_version,
+        sam2_config=args.sam2_config,
+        model_type=args.sam_model_type,
+        device=device
+    )
+    sam_status_str = f"Active [{sam_refiner.sam_version} on {device.upper()}]" if sam_refiner.has_sam else "Geometric Hierarchy Constraint Fallback"
+    print(f"SAM Refiner Status: {sam_status_str}")
 
     exp_dir = os.path.join(args.save_dir, args.ratio)
     os.makedirs(exp_dir, exist_ok=True)
@@ -268,6 +303,7 @@ def main():
 
             action = decision['action']
             weight = decision['weight']
+            score = decision.get('score', 0.0)
 
             if action == PseudoLabelAction.ACCEPT:
                 counts['ACCEPT'] += 1
@@ -275,6 +311,7 @@ def main():
                     'image': batch['image'].squeeze(0),
                     'mask': pred_labels[0].cpu(),
                     'weight': 1.0,
+                    'score': score,
                     'patient_id': batch['patient_id'][0]
                 })
 
@@ -291,6 +328,7 @@ def main():
                     'image': batch['image'].squeeze(0),
                     'mask': refined['assembled_seg'].clone().detach() if isinstance(refined['assembled_seg'], torch.Tensor) else torch.from_numpy(refined['assembled_seg']),
                     'weight': 0.8,
+                    'score': score,
                     'patient_id': batch['patient_id'][0]
                 })
 
@@ -302,14 +340,23 @@ def main():
     print(f"  • 🟢 ACCEPT (Direct Pseudo-Label) : {counts['ACCEPT']:2d} / {total_unlabeled} ({counts['ACCEPT']/total_unlabeled*100:.1f}%)")
     print(f"  • 🟡 REFINE (Refined by SAM-Med3D): {counts['REFINE']:2d} / {total_unlabeled} ({counts['REFINE']/total_unlabeled*100:.1f}%)")
     print(f"  • 🔴 REJECT (Discarded Noise)     : {counts['REJECT']:2d} / {total_unlabeled} ({counts['REJECT']/total_unlabeled*100:.1f}%)")
-    print(f"  >> Total Validated Pseudo-Labels  : {len(pseudo_labeled_pool)} cases added to training pool!\n")
+    print(f"  >> Total Validated Pseudo-Labels  : {len(pseudo_labeled_pool)} cases generated.")
+
+    # Optional Smart Balancing: Prevent Pseudo-Label Drowning in Low-Data Regimes
+    if args.max_pseudo_ratio is not None and len(pseudo_labeled_pool) > 0:
+        max_allowed = max(1, int(len(labeled_dataset) * args.max_pseudo_ratio))
+        if len(pseudo_labeled_pool) > max_allowed:
+            pseudo_labeled_pool.sort(key=lambda x: x.get('score', 0.0), reverse=True)
+            print(f"  ⚡ [BALANCER] Retaining Top-{max_allowed} highest-confidence pseudo-labels (Ratio {args.max_pseudo_ratio}x labeled count: {len(labeled_dataset)} cases) to prevent confirmation bias drift.")
+            pseudo_labeled_pool = pseudo_labeled_pool[:max_allowed]
+    print(f"  >> Final Active Pseudo-Label Pool: {len(pseudo_labeled_pool)} cases added to training pool!\n")
 
     # =========================================================================
     # PHASE 3: Retrain 3D U-Net on Labeled + Verified Pseudo-Labels
     # =========================================================================
     print(f">>> [PHASE 3] Retraining 3D U-Net on Augmented Dataset (Epoch {warmup_epochs + 1} - {epochs})...")
 
-    # Combine labeled dataset items with verified pseudo-labels
+    # Combine labeled dataset items with verified pseudo-labels (clean matching keys for DataLoader collate)
     augmented_samples = []
     for i in range(len(labeled_dataset)):
         sample = labeled_dataset[i]
@@ -319,7 +366,13 @@ def main():
             'weight': 1.0,
             'patient_id': sample['patient_id']
         })
-    augmented_samples.extend(pseudo_labeled_pool)
+    for p_item in pseudo_labeled_pool:
+        augmented_samples.append({
+            'image': p_item['image'],
+            'mask': p_item['mask'],
+            'weight': p_item['weight'],
+            'patient_id': p_item['patient_id']
+        })
 
     augmented_dataset = PseudoLabeledDataset(augmented_samples)
     augmented_loader = DataLoader(augmented_dataset, batch_size=batch_size, shuffle=True)
@@ -400,10 +453,22 @@ def main():
                 }, ckpt_path)
                 print(f"   [SAVED] New best model checkpoint: {ckpt_path}\n")
 
+    # Save final metrics summary for master reporting
+    summary_path = os.path.join(exp_dir, "metrics_summary.json")
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        json.dump({
+            'ratio': args.ratio,
+            'best_mean_dice': best_val_dice,
+            'epochs': epochs,
+            'warmup_epochs': warmup_epochs,
+            'checkpoint': os.path.join(exp_dir, "best_model.pth")
+        }, f, indent=2)
+
     print("\n=======================================================")
     print("[COMPLETE] Pipeline Finished Successfully!")
     print(f"  • Best Validation Mean Dice : {best_val_dice*100:.2f}%")
     print(f"  • Model Checkpoint Saved To : {exp_dir}")
+    print(f"  • Metrics Summary Saved To  : {summary_path}")
     print("=======================================================\n")
 
 

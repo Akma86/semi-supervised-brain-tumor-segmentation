@@ -90,9 +90,21 @@ def evaluate_subregion_reliabilities(
     r_tc = compute_reliability_score(probs, tc_mask)
     r_et = compute_reliability_score(probs, et_mask)
 
+    # Average only over present sub-regions so absent ET (common in glioma slices)
+    # does not artificially zero-out overall slice reliability
+    present_scores = []
+    if (wt_mask > 0.5).sum() > 0:
+        present_scores.append(r_wt)
+    if (tc_mask > 0.5).sum() > 0:
+        present_scores.append(r_tc)
+    if (et_mask > 0.5).sum() > 0:
+        present_scores.append(r_et)
+
+    r_mean = float(np.mean(present_scores)) if len(present_scores) > 0 else 0.0
+
     return {
         'reliability_WT': r_wt,
         'reliability_TC': r_tc,
         'reliability_ET': r_et,
-        'reliability_mean': (r_wt + r_tc + r_et) / 3.0
+        'reliability_mean': r_mean
     }
