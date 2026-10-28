@@ -25,18 +25,24 @@ if sys.platform.startswith('win'):
         pass
 
 
-def build_excel_report(output_path: str = "runs/benchmark_master_results.xlsx"):
+def build_excel_report(
+    output_path: str = "runs/benchmark_master_results.xlsx",
+    splits_path: str = "data/splits.json",
+    sup_dir: str = "runs/supervised",
+    semi_dir: str = "runs/experiments",
+    dataset_name: str = "BraTS-Africa"
+):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    with open("data/splits.json", "r", encoding="utf-8") as f:
+    with open(splits_path, "r", encoding="utf-8") as f:
         splits_data = json.load(f)
 
-    ratios = ["ratio_10", "ratio_20", "ratio_40", "ratio_80"]
+    target_order = ["ratio_10", "ratio_20", "ratio_40", "ratio_70", "ratio_80", "ratio_30", "ratio_50", "ratio_100"]
+    available_parts = splits_data.get('semi_supervised_partitions', {})
+    ratios = [r for r in target_order if r in available_parts]
     r_labels = {
-        "ratio_10": "10% Labeled (10 Cases)",
-        "ratio_20": "20% Labeled (20 Cases)",
-        "ratio_40": "40% Labeled (41 Cases)",
-        "ratio_80": "80% Labeled (82 Cases)"
+        r: f"{int(available_parts[r]['labeled_ratio']*100)}% Labeled ({available_parts[r]['num_labeled']} Cases)"
+        for r in ratios
     }
 
     wb = Workbook()
@@ -131,7 +137,7 @@ def build_excel_report(output_path: str = "runs/benchmark_master_results.xlsx"):
         n_unlabeled = part.get('num_unlabeled', 0)
 
         # Supervised Data
-        sup_file = f"runs/supervised/{ratio}/metrics_summary.json"
+        sup_file = os.path.join(sup_dir, ratio, "metrics_summary.json")
         sup_wt, sup_tc, sup_et, sup_mean = 0.0, 0.0, 0.0, 0.0
         if os.path.exists(sup_file):
             with open(sup_file) as sf:
@@ -143,7 +149,7 @@ def build_excel_report(output_path: str = "runs/benchmark_master_results.xlsx"):
                 sup_mean = sd.get('best_mean_dice', 0.0) * 100
 
         # Semi-Supervised Data
-        semi_file = f"runs/experiments/{ratio}/metrics_summary.json"
+        semi_file = os.path.join(semi_dir, ratio, "metrics_summary.json")
         semi_wt, semi_tc, semi_et, semi_mean = 0.0, 0.0, 0.0, 0.0
         if os.path.exists(semi_file):
             with open(semi_file) as smf:
@@ -224,7 +230,7 @@ def build_excel_report(output_path: str = "runs/benchmark_master_results.xlsx"):
     for ratio in ratios:
         part = splits_data['semi_supervised_partitions'].get(ratio, {})
         n_labeled = part.get('num_labeled', 0)
-        sup_file = f"runs/supervised/{ratio}/metrics_summary.json"
+        sup_file = os.path.join(sup_dir, ratio, "metrics_summary.json")
         if os.path.exists(sup_file):
             with open(sup_file) as sf:
                 sd = json.load(sf)
@@ -255,9 +261,19 @@ def main():
     parser = argparse.ArgumentParser(description="Export Benchmark Results to Styled Excel (.xlsx)")
     parser.add_argument("--output", type=str, default="runs/benchmark_master_results.xlsx",
                         help="Path for saving the Excel report (.xlsx)")
+    parser.add_argument("--splits", type=str, default="data/splits.json", help="Path to splits JSON")
+    parser.add_argument("--sup_dir", type=str, default="runs/supervised", help="Supervised results directory")
+    parser.add_argument("--semi_dir", type=str, default="runs/experiments", help="Semi-supervised results directory")
+    parser.add_argument("--dataset_name", type=str, default="BraTS-Africa", help="Dataset name")
     args = parser.parse_args()
 
-    build_excel_report(args.output)
+    build_excel_report(
+        output_path=args.output,
+        splits_path=args.splits,
+        sup_dir=args.sup_dir,
+        semi_dir=args.semi_dir,
+        dataset_name=args.dataset_name
+    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,58 @@
+# BraTS 2019 Experiment Configuration
+# Benchmark: MICCAI BraTS 2019 Multimodal Brain Tumor Segmentation Challenge
+
+project:
+  name: "semi-supervised-brain-tumor-segmentation-brats2019"
+  seed: 42
+  device: "cuda"
+
+dataset:
+  name: "BraTS-2019"
+  root_dir: "data/BraTS-2019/MICCAI_BraTS_2019_Data_Training"
+  splits_file: "data/splits_brats2019.json"
+  cohorts:
+    - "HGG"
+    - "LGG"
+  modalities:
+    - "t1c"
+    - "t1n"
+    - "t2f"
+    - "t2w"
+  num_classes: 4 # 0: Background, 1: NCR, 2: ED, 3: ET
+  sub_regions:
+    WT: [1, 2, 3] # Whole Tumor
+    TC: [1, 3]    # Tumor Core
+    ET: [3]       # Enhancing Tumor
+  spatial_size: [128, 128, 128]
+  slice_size: [256, 256]
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+semi_supervised:
+  labeled_ratios: [0.10, 0.20, 0.40, 0.80, 1.0]
+  active_ratio: 0.10
+  strategy: "medsam_pseudo_labeling"
+  pseudo_label_threshold: 0.65
+  max_pseudo_ratio: 1.5
+
+foundation_model:
+  name: "medsam"
+  checkpoint: "medsam_repo/work_dir/MedSAM/medsam_vit_b.pth"
+  freeze_image_encoder: true
+  prompt_type: "bounding_box"
+
+training:
+  batch_size: 2
+  num_workers: 4
+  epochs: 200
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-5
+  optimizer: "AdamW"
+  lr_scheduler: "CosineAnnealingLR"
+  min_lr: 1.0e-6
+  mixed_precision: true
+
+logging:
+  save_dir: "runs/brats2019"
+  log_interval: 10
+  save_best_metric: "val_mean_dice"

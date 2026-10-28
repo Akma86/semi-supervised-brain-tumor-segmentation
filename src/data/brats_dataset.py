@@ -27,13 +27,22 @@ class BraTSDataset(Dataset):
         mode: '3d' for full volumetric cubes, '2d' for slice-by-slice prompting
     """
 
-    MODALITY_SUFFIXES = {
-        't1c': '-t1c.nii.gz',
-        't1n': '-t1n.nii.gz',
-        't2f': '-t2f.nii.gz',
-        't2w': '-t2w.nii.gz',
-        'seg': '-seg.nii.gz'
+    MODALITY_PATTERNS = {
+        't1c': ['-t1c.nii.gz', '_t1ce.nii.gz', '_t1ce.nii', '-t1c.nii'],
+        't1n': ['-t1n.nii.gz', '_t1.nii.gz', '_t1.nii', '-t1n.nii'],
+        't2f': ['-t2f.nii.gz', '_flair.nii.gz', '_flair.nii', '-t2f.nii'],
+        't2w': ['-t2w.nii.gz', '_t2.nii.gz', '_t2.nii', '-t2w.nii'],
+        'seg': ['-seg.nii.gz', '_seg.nii.gz', '_seg.nii', '-seg.nii']
     }
+
+    @classmethod
+    def _resolve_file_path(cls, folder: str, patient_id: str, modality_key: str) -> Optional[str]:
+        patterns = cls.MODALITY_PATTERNS.get(modality_key, [])
+        for pat in patterns:
+            cand = os.path.join(folder, f"{patient_id}{pat}")
+            if os.path.exists(cand):
+                return cand
+        return None
 
     def __init__(
         self,
@@ -64,7 +73,7 @@ class BraTSDataset(Dataset):
                 continue
             candidates = sorted([
                 os.path.join(d, f) for f in os.listdir(d)
-                if os.path.isdir(os.path.join(d, f)) and f.startswith("BraTS-SSA")
+                if os.path.isdir(os.path.join(d, f)) and not f.startswith(".")
             ])
             self.patient_folders.extend(candidates)
 
@@ -129,10 +138,9 @@ class BraTSDataset(Dataset):
         # Load multi-modal MRI scans
         modality_volumes = []
         for m in self.modalities:
-            file_name = f"{patient_id}{self.MODALITY_SUFFIXES[m]}"
-            file_path = os.path.join(folder, file_name)
-            if not os.path.exists(file_path):
-                raise FileNotFoundError(f"Missing modality {m} for patient {patient_id}: {file_path}")
+            file_path = self._resolve_file_path(folder, patient_id, m)
+            if file_path is None or not os.path.exists(file_path):
+                raise FileNotFoundError(f"Missing modality {m} for patient {patient_id} in {folder}")
             vol = self.load_nifti_image(file_path)
             vol = self.normalize_intensity(vol)
             modality_volumes.append(vol)
@@ -142,9 +150,11 @@ class BraTSDataset(Dataset):
 
         # Load Ground Truth segmentation mask if labeled
         if self.is_labeled:
-            seg_file = os.path.join(folder, f"{patient_id}{self.MODALITY_SUFFIXES['seg']}")
-            if os.path.exists(seg_file):
+            seg_file = self._resolve_file_path(folder, patient_id, 'seg')
+            if seg_file and os.path.exists(seg_file):
                 seg = self.load_nifti_image(seg_file).astype(np.int64)
+                # Remap BraTS 2018/2019 label 4 (Enhancing Tumor) to standard 3
+                seg[seg == 4] = 3
             else:
                 seg = np.zeros(image.shape[1:], dtype=np.int64)
         else:

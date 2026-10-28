@@ -57,6 +57,10 @@ pretrained_models/
 runs/*
 !runs/benchmark_master_results.xlsx
 !runs/master_comparative_table.json
+!runs/brats2019/
+runs/brats2019/*
+!runs/brats2019/benchmark_master_results.xlsx
+!runs/brats2019/master_comparative_table.json
 logs/
 wandb/
 mlruns/
@@ -71,6 +75,9 @@ medsam_repo/
 
 # Medical Imaging Data & NIfTI Files (Keep repository lightweight)
 data/BraTS-Africa/
+data/BraTS-2019/
+data/*.zip
+*.zip
 data/raw/
 data/processed/
 *.nii

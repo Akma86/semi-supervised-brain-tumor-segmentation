@@ -57,8 +57,8 @@ def run_command_stream(cmd: list, log_file: str) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="Master Unified Runner: Supervised vs. Semi-Supervised")
-    parser.add_argument("--ratios", nargs="+", default=["ratio_10", "ratio_20", "ratio_40", "ratio_80"],
-                        help="List of ratio splits to run sequentially (default: ratio_10 ratio_20 ratio_40 ratio_80)")
+    parser.add_argument("--ratios", nargs="+", default=["ratio_10", "ratio_20", "ratio_40", "ratio_70", "ratio_80"],
+                        help="List of ratio splits to run sequentially (default: ratio_10 ratio_20 ratio_40 ratio_70 ratio_80)")
     parser.add_argument("--epochs", type=int, default=200, help="Total epochs per experiment (default: 200)")
     parser.add_argument("--warmup_epochs", type=int, default=40, help="Warmup epochs for semi-supervised (default: 40)")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size (default: 2)")

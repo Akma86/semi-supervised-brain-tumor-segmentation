@@ -51,7 +51,7 @@ def main():
     parser = argparse.ArgumentParser(description="Pure Supervised Training Benchmark (Single 3D U-Net)")
     parser.add_argument("--config", type=str, default="configs/default_config.yaml", help="Path to config file")
     parser.add_argument("--ratio", type=str, default="ratio_10",
-                        choices=["ratio_10", "ratio_20", "ratio_30", "ratio_40", "ratio_50", "ratio_80", "ratio_100"],
+                        choices=["ratio_10", "ratio_20", "ratio_30", "ratio_40", "ratio_50", "ratio_70", "ratio_80", "ratio_100"],
                         help="Labeled split ratio key")
     parser.add_argument("--epochs", type=int, default=200, help="Total training epochs (default: 200)")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size per step (default: 2)")
@@ -59,6 +59,7 @@ def main():
     parser.add_argument("--val_interval", type=int, default=5, help="Epoch interval for validation (default: 5)")
     parser.add_argument("--device", type=str, default=None, help="Device (cuda or cpu)")
     parser.add_argument("--save_dir", type=str, default="runs/supervised", help="Base directory for saving checkpoints")
+    parser.add_argument("--splits", type=str, default=None, help="Path to splits JSON file (default: from config or data/splits.json)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -76,7 +77,7 @@ def main():
     print(f" Learning Rate: {args.lr}")
 
     # Resolve paths & partitions
-    splits_file = "data/splits.json"
+    splits_file = args.splits or cfg['dataset'].get('splits_file', 'data/splits.json')
     if not os.path.exists(splits_file):
         raise FileNotFoundError(f"Splits file not found at {splits_file}. Run scripts/prepare_splits.py first.")
 

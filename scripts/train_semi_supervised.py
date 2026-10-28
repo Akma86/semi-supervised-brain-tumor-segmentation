@@ -68,7 +68,7 @@ def main():
     parser = argparse.ArgumentParser(description="Hierarchy-Aware Semi-Supervised Segmentation (Single U-Net + SAM Refiner)")
     parser.add_argument("--config", type=str, default="configs/default_config.yaml", help="Path to config file")
     parser.add_argument("--ratio", type=str, default="ratio_10",
-                        choices=["ratio_10", "ratio_20", "ratio_30", "ratio_40", "ratio_50", "ratio_80", "ratio_100"],
+                        choices=["ratio_10", "ratio_20", "ratio_30", "ratio_40", "ratio_50", "ratio_70", "ratio_80", "ratio_100"],
                         help="Labeled split ratio key")
     parser.add_argument("--epochs", type=int, default=30, help="Total training epochs (default: 30)")
     parser.add_argument("--warmup_epochs", type=int, default=10, help="Warmup epochs on labeled data only (default: 10)")
@@ -85,6 +85,7 @@ def main():
     parser.add_argument("--tau_high", type=float, default=0.50, help="High reliability threshold for ACCEPT (default: 0.50)")
     parser.add_argument("--tau_low", type=float, default=0.15, help="Low reliability threshold for REJECT (default: 0.15)")
     parser.add_argument("--max_pseudo_ratio", type=float, default=None, help="Optional max ratio of pseudo-labels to labeled samples (e.g. 2.0 to prevent drowning in ratio_10)")
+    parser.add_argument("--splits", type=str, default=None, help="Path to splits JSON file (default: from config or data/splits.json)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -97,7 +98,7 @@ def main():
     print("Architecture: Single 3D U-Net (NO Teacher Network)")
 
     # Resolve paths & partitions
-    splits_file = "data/splits.json"
+    splits_file = args.splits or cfg['dataset'].get('splits_file', 'data/splits.json')
     if not os.path.exists(splits_file):
         raise FileNotFoundError(f"Splits file not found at {splits_file}. Run scripts/prepare_splits.py first.")
 
@@ -188,7 +189,8 @@ def main():
     sam_status_str = f"Active [{sam_refiner.sam_version} on {device.upper()}]" if sam_refiner.has_sam else "Geometric Hierarchy Constraint Fallback"
     print(f"SAM Refiner Status: {sam_status_str}")
 
-    exp_dir = os.path.join(args.save_dir, args.ratio)
+    save_base = args.save_dir if args.save_dir != "runs/semi_supervised" else cfg.get('logging', {}).get('save_dir', 'runs/semi_supervised')
+    exp_dir = os.path.join(save_base, args.ratio)
     os.makedirs(exp_dir, exist_ok=True)
 
     epochs = args.epochs

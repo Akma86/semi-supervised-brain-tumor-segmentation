@@ -1,0 +1,81 @@
+{
+  "dataset": "BraTS-2019",
+  "timestamp": "2026-10-28 16:37:42",
+  "comparison": {
+    "ratio_10": {
+      "labeled_patients": 24,
+      "unlabeled_patients": 211,
+      "supervised_mean_dice": 0.651387756161281,
+      "supervised_best_epoch": 100,
+      "supervised_metrics": {
+        "WT": 0.65823571974564,
+        "TC": 0.615595469232638,
+        "ET": 0.6803320795055647,
+        "Mean": 0.651387756161281
+      },
+      "semi_supervised_mean_dice": 0.608140219450221,
+      "semi_supervised_metrics": {},
+      "absolute_gain": -0.043247536711059964
+    },
+    "ratio_20": {
+      "labeled_patients": 47,
+      "unlabeled_patients": 188,
+      "supervised_mean_dice": 0.6597159826413246,
+      "supervised_best_epoch": 95,
+      "supervised_metrics": {
+        "WT": 0.6501814265759117,
+        "TC": 0.6076989282875707,
+        "ET": 0.721267593060491,
+        "Mean": 0.6597159826413246
+      },
+      "semi_supervised_mean_dice": 0.6082951209071962,
+      "semi_supervised_metrics": {},
+      "absolute_gain": -0.05142086173412841
+    },
+    "ratio_40": {
+      "labeled_patients": 94,
+      "unlabeled_patients": 141,
+      "supervised_mean_dice": 0.6705356135234959,
+      "supervised_best_epoch": 65,
+      "supervised_metrics": {
+        "WT": 0.6398193636563106,
+        "TC": 0.623304097690035,
+        "ET": 0.7484833792241414,
+        "Mean": 0.6705356135234959
+      },
+      "semi_supervised_mean_dice": 0.7234660695456512,
+      "semi_supervised_metrics": {},
+      "absolute_gain": 0.05293045602215529
+    },
+    "ratio_70": {
+      "labeled_patients": 164,
+      "unlabeled_patients": 71,
+      "supervised_mean_dice": 0.7089123519070532,
+      "supervised_best_epoch": 80,
+      "supervised_metrics": {
+        "WT": 0.7546675951547417,
+        "TC": 0.6367771125825061,
+        "ET": 0.7352923479839119,
+        "Mean": 0.7089123519070532
+      },
+      "semi_supervised_mean_dice": 0.6951083333956036,
+      "semi_supervised_metrics": {},
+      "absolute_gain": -0.013804018511449523
+    },
+    "ratio_80": {
+      "labeled_patients": 188,
+      "unlabeled_patients": 47,
+      "supervised_mean_dice": 0.683448316475777,
+      "supervised_best_epoch": 45,
+      "supervised_metrics": {
+        "WT": 0.7670233877067502,
+        "TC": 0.6066622643715033,
+        "ET": 0.6766592973490774,
+        "Mean": 0.683448316475777
+      },
+      "semi_supervised_mean_dice": 0.6733025225007582,
+      "semi_supervised_metrics": {},
+      "absolute_gain": -0.010145793975018802
+    }
+  }
+}

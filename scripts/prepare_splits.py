@@ -8,12 +8,23 @@ import os
 import json
 import argparse
 import random
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
-def discover_patients(data_dir: str) -> Dict[str, List[str]]:
+def discover_patients(data_dir: str, cohorts: Optional[List[str]] = None) -> Dict[str, List[str]]:
     """Scans and discovers patient folder IDs in each cohort."""
-    cohorts = ['95_Glioma', '51_OtherNeoplasms']
+    if not os.path.exists(data_dir):
+        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+
+    if cohorts is None:
+        subdirs = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
+        if '95_Glioma' in subdirs or '51_OtherNeoplasms' in subdirs:
+            cohorts = [c for c in ['95_Glioma', '51_OtherNeoplasms'] if c in subdirs]
+        elif 'HGG' in subdirs or 'LGG' in subdirs:
+            cohorts = [c for c in ['HGG', 'LGG'] if c in subdirs]
+        else:
+            cohorts = subdirs
+
     patients_by_cohort = {}
 
     for cohort in cohorts:
@@ -23,7 +34,7 @@ def discover_patients(data_dir: str) -> Dict[str, List[str]]:
             continue
         patient_ids = sorted([
             f for f in os.listdir(cohort_dir)
-            if os.path.isdir(os.path.join(cohort_dir, f)) and f.startswith("BraTS-SSA")
+            if os.path.isdir(os.path.join(cohort_dir, f)) and not f.startswith(".")
         ])
         patients_by_cohort[cohort] = patient_ids
         print(f"Discovered {len(patient_ids)} patients in cohort: {cohort}")
@@ -65,7 +76,7 @@ def create_splits(
     random.shuffle(train_all)
     n_train_total = len(train_all)
 
-    ratios = [0.10, 0.20, 0.30, 0.40, 0.50, 0.80, 1.00]
+    ratios = [0.10, 0.20, 0.30, 0.40, 0.50, 0.70, 0.80, 1.00]
     semi_supervised_partitions = {}
 
     for r in ratios:
