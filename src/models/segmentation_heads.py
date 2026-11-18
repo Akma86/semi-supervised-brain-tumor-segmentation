@@ -64,3 +64,69 @@ class DiceCELoss(nn.Module):
             return (loss_per_sample * w).sum() / (w.sum() + self.eps)
 
         return loss_per_sample.mean()
+
+
+class SubregionDiceCELoss(nn.Module):
+    """
+    Directly optimizes BraTS nested evaluation regions (WT, TC, ET) with batch-level Soft Dice
+    combined with cross-entropy, supporting per-sample weights and optional voxel confidence masks.
+    """
+    def __init__(self, ce_weight: float = 0.7, dice_weight: float = 1.0, eps: float = 1e-5):
+        super().__init__()
+        self.ce_weight = ce_weight
+        self.dice_weight = dice_weight
+        self.eps = eps
+
+    def _soft_dice_loss(
+        self,
+        prob: torch.Tensor,
+        target: torch.Tensor,
+        weight_map: torch.Tensor,
+    ) -> torch.Tensor:
+        inter = (prob * target * weight_map).sum()
+        denom = ((prob + target) * weight_map).sum()
+        return 1.0 - (2.0 * inter + self.eps) / (denom + self.eps)
+
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        sample_weights: Optional[torch.Tensor] = None,
+        voxel_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        B = logits.shape[0]
+        device = logits.device
+
+        if sample_weights is None:
+            sw = torch.ones((B,), device=device, dtype=logits.dtype)
+        else:
+            sw = sample_weights.view(B).to(device=device, dtype=logits.dtype)
+
+        if voxel_mask is None:
+            vm = torch.ones_like(targets, device=device, dtype=logits.dtype)
+        else:
+            vm = voxel_mask.to(device=device, dtype=logits.dtype)
+
+        # Masked weighted cross-entropy per sample
+        ce_map = F.cross_entropy(logits, targets, reduction='none') * vm
+        ce_per_sample = ce_map.flatten(1).sum(dim=1) / vm.flatten(1).sum(dim=1).clamp_min(1.0)
+        ce_loss = (ce_per_sample * sw).sum() / sw.sum().clamp_min(self.eps)
+
+        # Compute Soft Dice in float32 for numerical stability under AMP
+        probs = F.softmax(logits.float(), dim=1)
+        weight_map = (vm * sw.view(B, 1, 1)).float()
+
+        p_wt = probs[:, 1] + probs[:, 2] + probs[:, 3]
+        p_tc = probs[:, 1] + probs[:, 3]
+        p_et = probs[:, 3]
+
+        g_wt = (targets > 0).float()
+        g_tc = ((targets == 1) | (targets == 3)).float()
+        g_et = (targets == 3).float()
+
+        loss_wt = self._soft_dice_loss(p_wt, g_wt, weight_map)
+        loss_tc = self._soft_dice_loss(p_tc, g_tc, weight_map)
+        loss_et = self._soft_dice_loss(p_et, g_et, weight_map)
+        dice_loss = (loss_wt + 1.2 * loss_tc + 1.2 * loss_et) / 3.4
+
+        return self.ce_weight * ce_loss + self.dice_weight * dice_loss

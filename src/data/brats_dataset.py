@@ -129,64 +129,20 @@ class BraTSDataset(Dataset):
         }
 
     def __getitem__(self, idx: int) -> Dict[str, Union[torch.Tensor, str]]:
-        if idx in self._cache:
+        if self.mode in ('2d', '2.5d'):
+            cached = self._get_cached_volume(idx) if self.cache_data else None
+            if cached is not None:
+                return self._sample_slice_from_entry(cached)
+        elif idx in self._cache:
             return self._cache[idx]
 
-        folder = self.patient_folders[idx]
-        patient_id = os.path.basename(folder)
+        image, seg, patient_id = self._load_raw_patient_volume(idx)
 
-        # Load multi-modal MRI scans
-        modality_volumes = []
-        for m in self.modalities:
-            file_path = self._resolve_file_path(folder, patient_id, m)
-            if file_path is None or not os.path.exists(file_path):
-                raise FileNotFoundError(f"Missing modality {m} for patient {patient_id} in {folder}")
-            vol = self.load_nifti_image(file_path)
-            vol = self.normalize_intensity(vol)
-            modality_volumes.append(vol)
-
-        # Stack into [C, H, W, D] where C = len(modalities) (typically 4)
-        image = np.stack(modality_volumes, axis=0)
-
-        # Load Ground Truth segmentation mask if labeled
-        if self.is_labeled:
-            seg_file = self._resolve_file_path(folder, patient_id, 'seg')
-            if seg_file and os.path.exists(seg_file):
-                seg = self.load_nifti_image(seg_file).astype(np.int64)
-                # Remap BraTS 2018/2019 label 4 (Enhancing Tumor) to standard 3
-                seg[seg == 4] = 3
-            else:
-                seg = np.zeros(image.shape[1:], dtype=np.int64)
-        else:
-            # For unlabeled cases in semi-supervised training
-            seg = np.zeros(image.shape[1:], dtype=np.int64)
-
-        if self.mode == '2d':
-            # Extract 2D axial slice along depth dimension
-            D = image.shape[-1]
-            if self.is_labeled and (seg > 0).any():
-                tumor_slices = np.where(seg.sum(axis=(0, 1)) > 0)[0]
-                if len(tumor_slices) > 0 and np.random.rand() < 0.8:
-                    z = int(np.random.choice(tumor_slices))
-                else:
-                    z = int(np.random.randint(20, max(21, D - 20)))
-            else:
-                brain_slices = np.where(image.sum(axis=(0, 1, 2)) > 10.0)[0]
-                if len(brain_slices) > 0:
-                    z = int(np.random.choice(brain_slices))
-                else:
-                    z = int(np.random.randint(20, max(21, D - 20)))
-
-            image_slice = image[:, :, :, z]
-            seg_slice = seg[:, :, z]
-
-            sample = {
-                'image': torch.from_numpy(image_slice).float(),
-                'mask': torch.from_numpy(seg_slice).long(),
-                'patient_id': patient_id,
-                'slice_idx': z,
-                'is_labeled': self.is_labeled
-            }
+        if self.mode in ('2d', '2.5d'):
+            entry = self._pack_volume_entry(image, seg, patient_id)
+            if self.cache_data:
+                self._put_cached_volume(idx, entry)
+            return self._sample_slice_from_entry(entry)
         else:
             sample = {
                 'image': torch.from_numpy(image).float(),
@@ -202,3 +158,176 @@ class BraTSDataset(Dataset):
             self._cache[idx] = sample
 
         return sample
+
+    def _get_vol_cache(self) -> dict:
+        if not hasattr(self, '_vol_cache'):
+            self._vol_cache = {}
+            self._max_vol_cache = 110
+        return self._vol_cache
+
+    def _put_cached_volume(self, idx: int, entry: dict) -> None:
+        cache = self._get_vol_cache()
+        if idx in cache:
+            cache.pop(idx)
+        elif len(cache) >= self._max_vol_cache:
+            # Evict least-recently-used volume to stay within 16GB system RAM
+            cache.pop(next(iter(cache)))
+        cache[idx] = entry
+
+    def _get_cached_volume(self, idx: int) -> Optional[dict]:
+        cache = self._get_vol_cache()
+        if idx not in cache:
+            return None
+        entry = cache.pop(idx)
+        cache[idx] = entry
+        return entry
+
+    def _pack_volume_entry(self, image: np.ndarray, seg: np.ndarray, patient_id: str) -> dict:
+        H, W, D = image.shape[1], image.shape[2], image.shape[3]
+        fg = (np.abs(image).sum(axis=0) > 1e-4) | (seg > 0)
+        coords = np.argwhere(fg)
+        if len(coords) > 0:
+            h0, w0, d0 = np.maximum(0, coords.min(axis=0) - 2)
+            h1, w1, d1 = np.minimum([H, W, D], coords.max(axis=0) + 3)
+        else:
+            h0, w0, d0, h1, w1, d1 = 0, H, 0, W, 0, D
+
+        tumor_slices = (
+            np.where(seg.sum(axis=(0, 1)) > 0)[0]
+            if (self.is_labeled and (seg > 0).any())
+            else np.array([], dtype=np.int64)
+        )
+        brain_slices = np.where(np.abs(image).sum(axis=(0, 1, 2)) > 10.0)[0]
+        if len(brain_slices) == 0:
+            d_lo = min(10, max(0, D - 1))
+            d_hi = max(d_lo + 1, D - d_lo)
+            brain_slices = np.arange(d_lo, d_hi, dtype=np.int64)
+
+        return {
+            'patient_id': patient_id,
+            'orig_shape': (H, W, D),
+            'bbox': (int(h0), int(h1), int(w0), int(w1), int(d0), int(d1)),
+            'image_crop': image[:, h0:h1, w0:w1, d0:d1].astype(np.float16),
+            'seg_crop': seg[h0:h1, w0:w1, d0:d1].astype(np.uint8),
+            'tumor_slices': tumor_slices,
+            'brain_slices': brain_slices,
+        }
+
+    def _load_raw_patient_volume(self, idx: int) -> tuple:
+        folder = self.patient_folders[idx]
+        patient_id = os.path.basename(folder)
+
+        modality_volumes = []
+        for m in self.modalities:
+            file_path = self._resolve_file_path(folder, patient_id, m)
+            if file_path is None or not os.path.exists(file_path):
+                raise FileNotFoundError(f"Missing modality {m} for patient {patient_id} in {folder}")
+            vol = self.load_nifti_image(file_path)
+            vol = self.normalize_intensity(vol)
+            modality_volumes.append(vol)
+
+        image = np.stack(modality_volumes, axis=0)
+
+        if self.is_labeled:
+            seg_file = self._resolve_file_path(folder, patient_id, 'seg')
+            if seg_file and os.path.exists(seg_file):
+                seg = self.load_nifti_image(seg_file).astype(np.int64)
+                seg[seg == 4] = 3
+            else:
+                seg = np.zeros(image.shape[1:], dtype=np.int64)
+        else:
+            seg = np.zeros(image.shape[1:], dtype=np.int64)
+
+        return image, seg, patient_id
+
+    def get_patient_volume_entry(self, idx: int) -> dict:
+        """Loads and optionally LRU-caches the foreground-cropped 3D patient volume."""
+        cached = self._get_cached_volume(idx) if self.cache_data else None
+        if cached is not None:
+            return cached
+
+        image, seg, patient_id = self._load_raw_patient_volume(idx)
+        entry = self._pack_volume_entry(image, seg, patient_id)
+        if self.cache_data:
+            self._put_cached_volume(idx, entry)
+        return entry
+
+    def extract_slice(self, entry: dict, z: int, slice_mode: Optional[str] = None) -> tuple:
+        """
+        Reconstructs a 2D [4, H, W] or 2.5D [12, H, W] image and [H, W] seg slice.
+        2.5D orders channels as [z, z-1, z+1] so channels 0:4 hold the center slice.
+        """
+        mode = slice_mode or self.mode
+        H, W, D = entry['orig_shape']
+        h0, h1, w0, w1, d0, d1 = entry['bbox']
+        img_crop = entry['image_crop']
+        seg_crop = entry['seg_crop']
+
+        z_indices = [z] if mode != '2.5d' else [z, max(0, z - 1), min(D - 1, z + 1)]
+        img_out = np.zeros((4 * len(z_indices), H, W), dtype=np.float32)
+        for s_idx, zs in enumerate(z_indices):
+            if d0 <= zs < d1:
+                c0, c1 = s_idx * 4, (s_idx + 1) * 4
+                img_out[c0:c1, h0:h1, w0:w1] = img_crop[:, :, :, zs - d0].astype(np.float32)
+
+        seg_out = np.zeros((H, W), dtype=np.int64)
+        if d0 <= z < d1:
+            seg_out[h0:h1, w0:w1] = seg_crop[:, :, z - d0].astype(np.int64)
+        return img_out, seg_out
+
+    def extract_slices_batch(self, entry: dict, z_list, slice_mode: Optional[str] = None) -> np.ndarray:
+        """Vectorized extraction of a batch of 2D [B, 4, H, W] or 2.5D [B, 12, H, W] slices."""
+        mode = slice_mode or self.mode
+        H, W, D = entry['orig_shape']
+        h0, h1, w0, w1, d0, d1 = entry['bbox']
+        img_crop = entry['image_crop']
+
+        offsets = (0,) if mode != '2.5d' else (0, -1, 1)
+        z_arr = np.asarray(z_list, dtype=np.int64)
+        imgs_out = np.zeros((len(z_arr), 4 * len(offsets), H, W), dtype=np.float32)
+
+        for s_idx, off in enumerate(offsets):
+            zs = np.clip(z_arr + off, 0, D - 1)
+            valid = (zs >= d0) & (zs < d1)
+            if valid.any():
+                c0, c1 = s_idx * 4, (s_idx + 1) * 4
+                rel = zs[valid] - d0
+                imgs_out[valid, c0:c1, h0:h1, w0:w1] = np.transpose(
+                    img_crop[:, :, :, rel], (3, 0, 1, 2)
+                ).astype(np.float32)
+
+        return imgs_out
+
+    def _sample_slice_from_entry(self, entry: dict) -> Dict[str, Union[torch.Tensor, str]]:
+        tumor_slices = entry['tumor_slices']
+        brain_slices = entry['brain_slices']
+
+        if len(tumor_slices) > 0 and np.random.rand() < 0.85:
+            z = int(np.random.choice(tumor_slices))
+        else:
+            z = int(np.random.choice(brain_slices))
+
+        image_slice, seg_slice = self.extract_slice(entry, z)
+        sample = {
+            'image': torch.from_numpy(image_slice).float(),
+            'mask': torch.from_numpy(seg_slice).long(),
+            'patient_id': entry['patient_id'],
+            'slice_idx': z,
+            'is_labeled': self.is_labeled
+        }
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample
+
+
+class BraTSMultiSliceDataset(Dataset):
+    """Repeats patient indexing across an epoch so dynamic slice sampling covers full 3D brains."""
+    def __init__(self, base_dataset: BraTSDataset, slices_per_volume: int = 8):
+        self.base_dataset = base_dataset
+        self.slices_per_volume = max(1, int(slices_per_volume))
+
+    def __len__(self) -> int:
+        return len(self.base_dataset) * self.slices_per_volume
+
+    def __getitem__(self, idx: int) -> Dict[str, Union[torch.Tensor, str]]:
+        return self.base_dataset[idx % len(self.base_dataset)]

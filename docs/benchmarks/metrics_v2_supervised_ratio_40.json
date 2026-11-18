@@ -1,0 +1,27 @@
+{
+  "ratio": "ratio_40",
+  "pipeline": "v2",
+  "method": "supervised_segresnet",
+  "is_supervised": true,
+  "arch": "segresnet",
+  "slice_mode": "2.5d",
+  "tta": true,
+  "postprocess": true,
+  "best_mean_dice": 0.7986866470958741,
+  "best_val_notta_dice": 0.7927038921190029,
+  "best_epoch": 50,
+  "metrics": {
+    "WT": 0.8702547632990835,
+    "TC": 0.7956910202905916,
+    "ET": 0.730114157697947,
+    "Mean": 0.7986866470958741
+  },
+  "test_metrics": {
+    "WT": 0.8450784107667773,
+    "TC": 0.7514518196360371,
+    "ET": 0.6829986930470201,
+    "Mean": 0.7598429744832782
+  },
+  "epochs": 50,
+  "elapsed_sec": 3423.8
+}

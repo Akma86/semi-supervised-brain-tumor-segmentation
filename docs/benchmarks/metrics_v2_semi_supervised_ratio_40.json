@@ -1,0 +1,32 @@
+{
+  "ratio": "ratio_40",
+  "pipeline": "v2",
+  "method": "semi_supervised_medsam_softblend",
+  "arch": "segresnet",
+  "slice_mode": "2.5d",
+  "tta": true,
+  "postprocess": true,
+  "pseudo_slices_used": 800,
+  "triage_counts": {
+    "ACCEPT": 3452,
+    "REFINE": 1485,
+    "REJECT": 22
+  },
+  "best_mean_dice": 0.8060463084153828,
+  "best_val_notta_dice": 0.8013707271872093,
+  "best_epoch": 30,
+  "metrics": {
+    "WT": 0.8763308611635662,
+    "TC": 0.8024387546375458,
+    "ET": 0.7393693094450368,
+    "Mean": 0.8060463084153828
+  },
+  "test_metrics": {
+    "WT": 0.8460239739729487,
+    "TC": 0.7655761697733157,
+    "ET": 0.6963086907174614,
+    "Mean": 0.769302944821242
+  },
+  "epochs": 40,
+  "elapsed_sec": 6124.12
+}

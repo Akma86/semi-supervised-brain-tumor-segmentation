@@ -111,3 +111,67 @@ class FoundationModelPromptGenerator:
             y_max = min(H - 1, y_max + np.random.randint(0, self.perturbation_range + 1))
 
         return np.array([x_min, y_min, x_max, y_max], dtype=np.float32)
+
+
+class SliceAugmentation2D:
+    """
+    Lightweight spatial and intensity augmentations for 2D / 2.5D MRI slices.
+    Operates identically on [C, H, W] images (4 or 12 channels) and [H, W] masks.
+    """
+    def __init__(
+        self,
+        flip_prob: float = 0.5,
+        rot90_prob: float = 0.5,
+        intensity_prob: float = 0.5,
+        noise_prob: float = 0.25,
+        noise_std: float = 0.04,
+    ):
+        self.flip_prob = flip_prob
+        self.rot90_prob = rot90_prob
+        self.intensity_prob = intensity_prob
+        self.noise_prob = noise_prob
+        self.noise_std = noise_std
+
+    def __call__(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        image = sample['image']
+        mask = sample.get('mask')
+        voxel_mask = sample.get('voxel_mask')
+
+        if torch.rand(1).item() < self.flip_prob:
+            image = torch.flip(image, dims=[2])
+            if mask is not None:
+                mask = torch.flip(mask, dims=[1])
+            if voxel_mask is not None:
+                voxel_mask = torch.flip(voxel_mask, dims=[1])
+
+        if torch.rand(1).item() < self.flip_prob:
+            image = torch.flip(image, dims=[1])
+            if mask is not None:
+                mask = torch.flip(mask, dims=[0])
+            if voxel_mask is not None:
+                voxel_mask = torch.flip(voxel_mask, dims=[0])
+
+        if torch.rand(1).item() < self.rot90_prob:
+            k = int(torch.randint(1, 4, (1,)).item())
+            image = torch.rot90(image, k=k, dims=[1, 2])
+            if mask is not None:
+                mask = torch.rot90(mask, k=k, dims=[0, 1])
+            if voxel_mask is not None:
+                voxel_mask = torch.rot90(voxel_mask, k=k, dims=[0, 1])
+
+        fg = (image.abs().sum(dim=0, keepdim=True) > 1e-4)
+        if torch.rand(1).item() < self.intensity_prob and fg.any():
+            scale = 0.9 + 0.2 * torch.rand((image.shape[0], 1, 1), device=image.device, dtype=image.dtype)
+            shift = -0.1 + 0.2 * torch.rand((image.shape[0], 1, 1), device=image.device, dtype=image.dtype)
+            image = torch.where(fg, image * scale + shift, image)
+
+        if torch.rand(1).item() < self.noise_prob and fg.any():
+            noise = torch.randn_like(image) * self.noise_std
+            image = torch.where(fg, image + noise, image)
+
+        sample['image'] = image.contiguous()
+        if mask is not None:
+            sample['mask'] = mask.contiguous()
+        if voxel_mask is not None:
+            sample['voxel_mask'] = voxel_mask.contiguous()
+        return sample

@@ -49,12 +49,20 @@ def build_sam_rgb_input(mri_tensor: Union[np.ndarray, torch.Tensor]) -> np.ndarr
     t2w = mri[3] if mri.shape[0] > 3 else mri[0]
 
     def norm_to_uint8(ch: np.ndarray) -> np.ndarray:
-        c_min, c_max = ch.min(), ch.max()
-        if c_max - c_min > 1e-5:
-            norm = (ch - c_min) / (c_max - c_min)
+        bg_val = ch.min()
+        fg = ch[ch > bg_val + 1e-4]
+        if len(fg) > 20:
+            lo, hi = np.percentile(fg, 0.5), np.percentile(fg, 99.5)
+            if hi - lo > 1e-5:
+                norm = np.clip((ch - lo) / (hi - lo), 0.0, 1.0)
+                norm[ch <= bg_val + 1e-4] = 0.0
+                return (norm * 255.0).astype(np.uint8)
+        c_max = ch.max()
+        if c_max - bg_val > 1e-5:
+            norm = (ch - bg_val) / (c_max - bg_val)
         else:
             norm = np.zeros_like(ch)
-        return (norm * 255.0).astype(np.uint8)
+        return np.clip(norm * 255.0, 0.0, 255.0).astype(np.uint8)
 
     r = norm_to_uint8(t1c)
     g = norm_to_uint8(t2f)
@@ -139,11 +147,12 @@ class HierarchicalSAMRefiner:
         self.device = device
         self.margin = margin
         self.predictor = foundation_segmentor
+        self.medsam_model = None
         self.has_sam = (foundation_segmentor is not None)
         self.sam_version = "Custom" if self.has_sam else "None"
 
         if use_sam and not self.has_sam:
-            # 1. MedSAM from Bowang Lab (Nature Communications 2024, specialized for medical MRI)
+            # MedSAM (Bowang-Lab) uses [0, 1] 1024x1024 scaling rather than SamPredictor ImageNet stats
             if sam_version == "medsam" and HAS_SAM:
                 try:
                     ckpt = checkpoint_path or "medsam_repo/work_dir/MedSAM/medsam_vit_b.pth"
@@ -153,6 +162,7 @@ class HierarchicalSAMRefiner:
                         sam = sam_model_registry["vit_b"]()
                     sam.to(device=device)
                     sam.eval()
+                    self.medsam_model = sam
                     self.predictor = SamPredictor(sam)
                     self.has_sam = True
                     self.sam_version = "MedSAM (Bowang-Lab ViT-B)"
@@ -187,120 +197,143 @@ class HierarchicalSAMRefiner:
                 except Exception:
                     self.has_sam = False
 
+    def _encode_medsam_slice(self, rgb_image: np.ndarray) -> torch.Tensor:
+        """Encodes an RGB slice with official MedSAM [0, 1] 1024x1024 scaling (no ImageNet normalization)."""
+        inp = torch.from_numpy(rgb_image).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+        inp_1024 = F.interpolate(inp, size=(1024, 1024), mode="bilinear", align_corners=False).to(self.device)
+        use_amp = str(self.device).startswith("cuda")
+        with torch.no_grad():
+            if use_amp:
+                with torch.amp.autocast("cuda"):
+                    return self.medsam_model.image_encoder(inp_1024)
+            return self.medsam_model.image_encoder(inp_1024)
+
+    def _predict_box_prob(
+        self,
+        medsam_emb: Optional[torch.Tensor],
+        box_xyxy: np.ndarray,
+        orig_hw: Tuple[int, int],
+    ) -> np.ndarray:
+        """Predicts foreground probability [H, W] inside a 2D xyxy prompt box."""
+        H, W = orig_hw
+        if medsam_emb is not None and self.medsam_model is not None:
+            box_1024 = box_xyxy[None, :] / np.array([W, H, W, H], dtype=np.float32) * 1024.0
+            box_t = torch.as_tensor(box_1024, dtype=torch.float32, device=medsam_emb.device)[:, None, :]
+            use_amp = medsam_emb.is_cuda
+            with torch.no_grad():
+                if use_amp:
+                    with torch.amp.autocast("cuda"):
+                        sp, dp = self.medsam_model.prompt_encoder(points=None, boxes=box_t, masks=None)
+                        lr, _ = self.medsam_model.mask_decoder(
+                            image_embeddings=medsam_emb.float(),
+                            image_pe=self.medsam_model.prompt_encoder.get_dense_pe(),
+                            sparse_prompt_embeddings=sp,
+                            dense_prompt_embeddings=dp,
+                            multimask_output=False,
+                        )
+                else:
+                    sp, dp = self.medsam_model.prompt_encoder(points=None, boxes=box_t, masks=None)
+                    lr, _ = self.medsam_model.mask_decoder(
+                        image_embeddings=medsam_emb,
+                        image_pe=self.medsam_model.prompt_encoder.get_dense_pe(),
+                        sparse_prompt_embeddings=sp,
+                        dense_prompt_embeddings=dp,
+                        multimask_output=False,
+                    )
+                prob = F.interpolate(torch.sigmoid(lr.float()), size=(H, W), mode="bilinear", align_corners=False)
+            return prob[0, 0].cpu().numpy().astype(np.float32)
+
+        masks, _, _ = self.predictor.predict(box=box_xyxy[None, :], multimask_output=False)
+        return masks[0].astype(np.float32)
+
+    @staticmethod
+    def _to_binary_np(arr: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+        np_arr = arr.detach().cpu().numpy() if isinstance(arr, torch.Tensor) else arr
+        return (np_arr > 0.5).astype(np.float32)
+
+    @staticmethod
+    def _assemble_multiclass(wt: np.ndarray, tc: np.ndarray, et: np.ndarray) -> np.ndarray:
+        seg = np.zeros_like(wt, dtype=np.int64)
+        wt_b, tc_b, et_b = wt > 0.5, tc > 0.5, et > 0.5
+        seg[wt_b & (~tc_b)] = 2
+        seg[tc_b & (~et_b)] = 1
+        seg[et_b] = 3
+        return seg
+
     def refine_hierarchical(
         self,
         image: Union[np.ndarray, torch.Tensor],
         raw_wt: Union[np.ndarray, torch.Tensor],
         raw_tc: Union[np.ndarray, torch.Tensor],
-        raw_et: Union[np.ndarray, torch.Tensor]
+        raw_et: Union[np.ndarray, torch.Tensor],
+        raw_probs: Optional[Dict[str, np.ndarray]] = None,
+        blend_alpha: float = 0.65,
     ) -> Dict[str, Union[np.ndarray, torch.Tensor]]:
         """
-        Executes coarse-to-fine prompt refinement on raw U-Net candidate predictions.
-
-        Returns:
-            Dictionary with refined 'WT', 'TC', 'ET', assembled multi-class 'seg',
-            and verification of hierarchy compliance.
+        Executes coarse-to-fine prompt refinement on candidate predictions:
+        WT -> TC -> ET, optionally soft-blending student and MedSAM probabilities
+        while enforcing ET <= TC <= WT by construction.
         """
         is_torch = isinstance(raw_wt, torch.Tensor)
+        src_device = raw_wt.device if is_torch else None
 
-        # Optional SAM predictor execution if SAM is attached and image is 2D slice
-        rgb_image = build_sam_rgb_input(image) if (image.ndim in [3, 4]) else None
+        wt_np = self._to_binary_np(raw_wt)
+        tc_np = self._to_binary_np(raw_tc)
+        et_np = self._to_binary_np(raw_et)
 
-        # -------------------------------------------------------------
-        # Stage 1: Refine Whole Tumor (WT) - Coarsest lesion boundary
-        # -------------------------------------------------------------
-        if is_torch:
-            wt_b = (raw_wt > 0.5).float()
-            refined_wt = wt_b.clone()
-        else:
-            wt_b = (raw_wt > 0.5).astype(np.float32)
-            refined_wt = wt_b.copy()
+        rgb_image = build_sam_rgb_input(image) if (self.has_sam and image.ndim in [3, 4]) else None
+        medsam_emb = None
+        predictor_ready = False
 
-        if self.has_sam and self.predictor is not None and rgb_image is not None:
-            box_wt = extract_2d_bounding_box(raw_wt, margin=self.margin)
-            if box_wt is not None:
-                try:
+        if self.has_sam and rgb_image is not None:
+            try:
+                if self.medsam_model is not None:
+                    medsam_emb = self._encode_medsam_slice(rgb_image)
+                    predictor_ready = True
+                elif self.predictor is not None:
                     self.predictor.set_image(rgb_image)
-                    masks, _, _ = self.predictor.predict(box=box_wt[None, :], multimask_output=False)
-                    if is_torch:
-                        refined_wt = torch.from_numpy(masks[0].astype(np.float32)).to(raw_wt.device)
-                    else:
-                        refined_wt = masks[0].astype(np.float32)
-                except Exception:
-                    pass
+                    predictor_ready = True
+            except Exception:
+                predictor_ready = False
 
-        # -------------------------------------------------------------
-        # Stage 2: Refine Tumor Core (TC) - Guided strictly inside refined WT
-        # -------------------------------------------------------------
+        orig_hw = (wt_np.shape[0], wt_np.shape[1])
+
+        def _refine_region(region_key: str, cond_mask: np.ndarray, parent_mask: Optional[np.ndarray]) -> np.ndarray:
+            base = cond_mask * parent_mask if parent_mask is not None else cond_mask
+            if not predictor_ready:
+                return base
+            box = extract_2d_bounding_box(base, margin=self.margin)
+            if box is None:
+                return base
+            try:
+                sam_prob = self._predict_box_prob(medsam_emb, box, orig_hw)
+                if raw_probs is not None and region_key in raw_probs:
+                    fused = blend_alpha * raw_probs[region_key] + (1.0 - blend_alpha) * sam_prob
+                    out = (fused > 0.5).astype(np.float32)
+                else:
+                    out = (sam_prob > 0.5).astype(np.float32)
+                return out * parent_mask if parent_mask is not None else out
+            except Exception:
+                return base
+
+        refined_wt = _refine_region("WT", wt_np, None)
+        refined_tc = _refine_region("TC", tc_np, refined_wt)
+        refined_et = _refine_region("ET", et_np, refined_tc)
+        assembled = self._assemble_multiclass(refined_wt, refined_tc, refined_et)
+
         if is_torch:
-            tc_constrained = (raw_tc > 0.5).float() * refined_wt
-            refined_tc = tc_constrained
-        else:
-            tc_constrained = (raw_tc > 0.5).astype(np.float32) * refined_wt
-            refined_tc = tc_constrained
-
-        if self.has_sam and self.predictor is not None and rgb_image is not None:
-            # The prompt box for TC is derived from tc_constrained, ensuring WT guides TC
-            box_tc = extract_2d_bounding_box(tc_constrained, margin=self.margin)
-            if box_tc is not None:
-                try:
-                    masks, _, _ = self.predictor.predict(box=box_tc[None, :], multimask_output=False)
-                    sam_tc = torch.from_numpy(masks[0].astype(np.float32)).to(raw_tc.device) if is_torch else masks[0].astype(np.float32)
-                    refined_tc = sam_tc * refined_wt
-                except Exception:
-                    pass
-
-        # -------------------------------------------------------------
-        # Stage 3: Refine Enhancing Tumor (ET) - Guided strictly inside refined TC
-        # -------------------------------------------------------------
-        if is_torch:
-            et_constrained = (raw_et > 0.5).float() * refined_tc
-            refined_et = et_constrained
-        else:
-            et_constrained = (raw_et > 0.5).astype(np.float32) * refined_tc
-            refined_et = et_constrained
-
-        if self.has_sam and self.predictor is not None and rgb_image is not None:
-            # The prompt box for ET is derived from et_constrained, ensuring TC guides ET
-            box_et = extract_2d_bounding_box(et_constrained, margin=self.margin)
-            if box_et is not None:
-                try:
-                    masks, _, _ = self.predictor.predict(box=box_et[None, :], multimask_output=False)
-                    sam_et = torch.from_numpy(masks[0].astype(np.float32)).to(raw_et.device) if is_torch else masks[0].astype(np.float32)
-                    refined_et = sam_et * refined_tc
-                except Exception:
-                    pass
-
-        # -------------------------------------------------------------
-        # Stage 4: Assemble into Standard BraTS Multi-Class Mask
-        # 0: Background
-        # 1: Necrotic Tumor Core (NCR = TC \ ET)
-        # 2: Peritumoral Edema (ED = WT \ TC)
-        # 3: Enhancing Tumor (ET = ET)
-        # -------------------------------------------------------------
-        if is_torch:
-            assembled_seg = torch.zeros_like(refined_wt, dtype=torch.int64)
-            ed_mask = (refined_wt > 0.5) & (~(refined_tc > 0.5))
-            ncr_mask = (refined_tc > 0.5) & (~(refined_et > 0.5))
-            et_mask = (refined_et > 0.5)
-
-            assembled_seg[ed_mask] = 2
-            assembled_seg[ncr_mask] = 1
-            assembled_seg[et_mask] = 3
-        else:
-            assembled_seg = np.zeros_like(refined_wt, dtype=np.int64)
-            ed_mask = (refined_wt > 0.5) & (~(refined_tc > 0.5))
-            ncr_mask = (refined_tc > 0.5) & (~(refined_et > 0.5))
-            et_mask = (refined_et > 0.5)
-
-            assembled_seg[ed_mask] = 2
-            assembled_seg[ncr_mask] = 1
-            assembled_seg[et_mask] = 3
+            return {
+                'refined_WT': torch.from_numpy(refined_wt).to(src_device),
+                'refined_TC': torch.from_numpy(refined_tc).to(src_device),
+                'refined_ET': torch.from_numpy(refined_et).to(src_device),
+                'assembled_seg': torch.from_numpy(assembled).to(src_device),
+                'hierarchy_guaranteed': True,
+            }
 
         return {
             'refined_WT': refined_wt,
             'refined_TC': refined_tc,
             'refined_ET': refined_et,
-            'assembled_seg': assembled_seg,
-            'hierarchy_guaranteed': True
+            'assembled_seg': assembled,
+            'hierarchy_guaranteed': True,
         }
